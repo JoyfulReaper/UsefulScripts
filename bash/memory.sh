@@ -4,6 +4,8 @@ services=(
   randomsteam
   cloudflared
   happygopher
+  happyfinger
+  happyecho
 )
 
 declare -A cpu_before
@@ -157,3 +159,7 @@ sudo docker stats --no-stream \
 echo
 echo "System memory:"
 free -h
+
+echo
+echo "Disk Usage:"
+df -h /dev/vda1

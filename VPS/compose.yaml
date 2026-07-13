@@ -1,6 +1,48 @@
 name: joyful-stack
 
 services:
+  happyecho:
+    build:
+      context: ./HappyEcho
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+    init: true
+
+    environment:
+      DOTNET_ENVIRONMENT: Production
+
+      Echo__ListenAddress: 0.0.0.0
+      Echo__Port: 7
+      Echo__MaxConcurrentConnections: 64
+      Echo__RequestTimeoutSeconds: 15
+      Echo__MaxBytesPerConnection: 1048576
+      Echo__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://gateway:8080
+      MissionControl__ApiKey: ${HAPPYECHO_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
+    ports:
+      - "7:7/tcp"
+
+    cap_drop:
+      - ALL
+
+    cap_add:
+      - NET_BIND_SERVICE
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_started
+
+    networks:
+      - backend
+
   rabbitmq:
     image: rabbitmq:4-management
     hostname: rabbitmq
@@ -51,6 +93,12 @@ services:
       EventSources__Sources__2__Name: kgivler-api-production
       EventSources__Sources__2__ApiKey: ${KGIVLER_API_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__3__Name: randomsteam-production
+      EventSources__Sources__3__ApiKey: ${RANDOMSTEAM_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__4__Name: happyecho-production
+      EventSources__Sources__4__ApiKey: ${HAPPYECHO_MISSION_CONTROL_KEY}
+
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -95,6 +143,68 @@ services:
     networks:
       - backend
 
+  randomsteam:
+    image: joyful/randomsteam:${RANDOMSTEAM_IMAGE_TAG}
+
+    build:
+      context: ./RandomSteamGame
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+    init: true
+
+    # This deliberately preserves the application's current
+    # loopback-only forwarded-header trust model.
+    network_mode: host
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5182
+
+      Steam__ApiKey: ${RANDOMSTEAM_STEAM_API_KEY}
+      Steam__ConnectionString: Data Source=steam_cache.db
+
+      DataProtection__ApplicationName: RandomSteamGame
+      DataProtection__KeysPath: /data-protection
+
+      Application__CommitSha: ${RANDOMSTEAM_COMMIT_SHA}
+      Application__DeploymentType: docker
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://127.0.0.1:5190
+      MissionControl__ApiKey: ${RANDOMSTEAM_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
+      DOTNET_EnableDiagnostics: "0"
+
+    volumes:
+      - /var/lib/randomsteam/data:/app/Data
+      - /var/lib/randomsteam/data-protection:/data-protection
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://127.0.0.1:5182/health/live"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_started
+
   happyfinger:
     build:
       context: ./HappyFinger
@@ -104,6 +214,15 @@ services:
 
     environment:
       DOTNET_ENVIRONMENT: Production
+
+      PlanFile__Path: "/data/happyfinger/.plan"
+      PlanFile__MaxBytes: "16384"
+
+      FingerContent__OverrideDirectory: "/data/happyfinger/records"
+      FingerContent__MaxBytes: "16384"
+
+      RandomSteamGame__BaseUrl: "https://randomsteam.kgivler.com/"
+      RandomSteamGame__TimeoutSeconds: "5"
 
       Finger__ListenAddress: 0.0.0.0
       Finger__Port: 79
@@ -118,6 +237,9 @@ services:
 
     ports:
       - "79:79/tcp"
+
+    volumes:
+      - ./data/happyfinger:/data/happyfinger:ro
 
     cap_drop:
       - ALL

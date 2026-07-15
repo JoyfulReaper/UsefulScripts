@@ -1,6 +1,98 @@
 name: joyful-stack
 
 services:
+  happyqotd:
+    build:
+      context: ./HappyQOTD
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+    init: true
+
+    network_mode: host
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5193
+
+      QOTD__ListenAddress: 0.0.0.0
+      QOTD__Port: 17
+      QOTD__ApiBaseUrl: http://127.0.0.1:5193
+      QOTD__MaxConcurrentConnections: 64
+      QOTD__RequestTimeoutSeconds: 15
+
+      QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://127.0.0.1:5190
+      MissionControl__ApiKey: ${HAPPYQOTD_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
+      DOTNET_EnableDiagnostics: "0"
+
+    volumes:
+      - /var/lib/happyqotd/data:/app/Data
+
+    cap_drop:
+      - ALL
+
+    cap_add:
+      - NET_BIND_SERVICE
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_started
+
+  gitactivity:
+    build:
+      context: ./MissionControl
+      dockerfile: Dockerfile.gitactivity
+
+    restart: unless-stopped
+    init: true
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__UserName: ${RABBITMQ_USER}
+      RabbitMq__Password: ${RABBITMQ_PASSWORD}
+      RabbitMq__VirtualHost: "/mission-control"
+      RabbitMq__ClientProvidedName: mission-control-git-activity-production
+
+      RabbitMqConsumer__ExchangeName: kgivler.events
+      RabbitMqConsumer__QueueName: mission-control.git-activity
+      RabbitMqConsumer__RoutingKey: github.push.received
+      RabbitMqConsumer__PrefetchCount: 10
+
+      GitActivity__DatabaseFileName: git-activity.db
+      GitActivity__BasePath: /data
+      GitActivity__ApiKey: ${GITACTIVITY_API_KEY}
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    volumes:
+      - gitactivity-data:/data
+
+    ports:
+      - "127.0.0.1:5192:8080"
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - backend
+
   happyecho:
     build:
       context: ./HappyEcho
@@ -77,6 +169,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
 
+      GitHubWebhook__Enabled: "true"
+      GitHubWebhook__Secret: "${GITHUB_WEBHOOK_SECRET}"
+      GitHubWebhook__AllowedOwner: "JoyfulReaper"
+      GitHubWebhook__MaxPayloadBytes: "1048576"
+
       RabbitMq__HostName: rabbitmq
       RabbitMq__Port: 5672
       RabbitMq__UserName: ${RABBITMQ_USER}
@@ -98,6 +195,9 @@ services:
 
       EventSources__Sources__4__Name: happyecho-production
       EventSources__Sources__4__ApiKey: ${HAPPYECHO_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__5__Name: happyqotd-production
+      EventSources__Sources__5__ApiKey: ${HAPPYQOTD_MISSION_CONTROL_KEY}
 
     depends_on:
       rabbitmq:
@@ -308,3 +408,4 @@ networks:
 volumes:
   rabbitmq-data:
   archive-data:
+  gitactivity-data:

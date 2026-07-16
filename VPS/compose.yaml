@@ -22,6 +22,14 @@ services:
 
     network_mode: host
 
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:5193/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://127.0.0.1:5193
@@ -117,6 +125,8 @@ services:
       GitActivity__AllowedRepositories__13: JoyfulReaper/BetterTradeColors
       GitActivity__AllowedRepositories__14: JoyfulReaper/ScreenLapse
       GitActivity__AllowedRepositories__15: JoyfulReaper/WhatShouldIWorkOnToday
+      GitActivity__AllowedRepositories__16: JoyfulReaper/UsefulScripts
+
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master

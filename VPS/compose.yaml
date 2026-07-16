@@ -2,6 +2,17 @@ name: joyful-stack
 
 services:
   happyqotd:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     build:
       context: ./HappyQOTD
       dockerfile: Dockerfile
@@ -20,9 +31,10 @@ services:
       QOTD__ApiBaseUrl: http://127.0.0.1:5193
       QOTD__MaxConcurrentConnections: 64
       QOTD__RequestTimeoutSeconds: 15
-      
+
       QOTD__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
       QOTD__TelemetryIgnoredRemoteAddresses__1: "127.0.0.1"
+      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.7"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -54,6 +66,18 @@ services:
       context: ./MissionControl
       dockerfile: Dockerfile.gitactivity
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
     restart: unless-stopped
     init: true
 
@@ -77,6 +101,28 @@ services:
       GitActivity__BasePath: /data
       GitActivity__ApiKey: ${GITACTIVITY_API_KEY}
 
+      GitActivity__AllowedRepositories__0: JoyfulReaper/MissionControl
+      GitActivity__AllowedRepositories__1: JoyfulReaper/RandomSteamGame
+      GitActivity__AllowedRepositories__2: JoyfulReaper/ReaperShell
+      GitActivity__AllowedRepositories__3: JoyfulReaper/HappyQOTD
+      GitActivity__AllowedRepositories__4: JoyfulReaper/HappyFinger
+      GitActivity__AllowedRepositories__5: JoyfulReaper/HappyEcho
+      GitActivity__AllowedRepositories__6: JoyfulReaper/kgivler_com
+      GitActivity__AllowedRepositories__7: JoyfulReaper/HappyGopher
+      GitActivity__AllowedRepositories__8: JoyfulReaper/JoyfulReaperLib
+      GitActivity__AllowedRepositories__9: JoyfulReaper/Rimworld-ReplaceStuff
+      GitActivity__AllowedRepositories__10: JoyfulReaper/TheGodsAreReal
+      GitActivity__AllowedRepositories__11: JoyfulReaper/PanicZoneToggler
+      GitActivity__AllowedRepositories__12: JoyfulReaper/DivineIntervention
+      GitActivity__AllowedRepositories__13: JoyfulReaper/BetterTradeColors
+      GitActivity__AllowedRepositories__14: JoyfulReaper/ScreenLapse
+      GitActivity__AllowedRepositories__15: JoyfulReaper/WhatShouldIWorkOnToday
+
+      GitActivity__AllowedBranches__0: main
+      GitActivity__AllowedBranches__1: master
+      GitActivity__AllowedBranches__2: dev
+      GitActivity__AllowedBranches__3: feature-dashboard
+
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -90,16 +136,42 @@ services:
     cap_drop:
       - ALL
 
+    tmpfs:
+      - /tmp
+
+    read_only: true
+
     security_opt:
       - no-new-privileges:true
 
     networks:
       - backend
 
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
   happyecho:
     build:
       context: ./HappyEcho
       dockerfile: Dockerfile
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
 
     restart: unless-stopped
     init: true
@@ -144,6 +216,18 @@ services:
     hostname: rabbitmq
     restart: unless-stopped
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
@@ -168,6 +252,26 @@ services:
       dockerfile: Dockerfile.gateway
 
     restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
     environment:
       ASPNETCORE_ENVIRONMENT: Production
@@ -223,6 +327,26 @@ services:
 
     restart: unless-stopped
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
@@ -257,8 +381,21 @@ services:
       context: ./RandomSteamGame
       dockerfile: Dockerfile
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
     restart: unless-stopped
     init: true
+
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
 
     # This deliberately preserves the application's current
     # loopback-only forwarded-header trust model.
@@ -317,7 +454,20 @@ services:
       context: ./HappyFinger
       dockerfile: Dockerfile
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
     restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
 
     environment:
       DOTNET_ENVIRONMENT: Production
@@ -369,7 +519,20 @@ services:
       context: ./HappyGopher
       dockerfile: Dockerfile
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
     restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
 
     environment:
       DOTNET_ENVIRONMENT: Production

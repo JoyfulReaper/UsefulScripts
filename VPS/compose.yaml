@@ -20,6 +20,9 @@ services:
       QOTD__ApiBaseUrl: http://127.0.0.1:5193
       QOTD__MaxConcurrentConnections: 64
       QOTD__RequestTimeoutSeconds: 15
+      
+      QOTD__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
+      QOTD__TelemetryIgnoredRemoteAddresses__1: "127.0.0.1"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -110,6 +113,7 @@ services:
       Echo__RequestTimeoutSeconds: 15
       Echo__MaxBytesPerConnection: 1048576
       Echo__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Echo__BlockLoopbackConnections: true
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080
@@ -198,6 +202,9 @@ services:
 
       EventSources__Sources__5__Name: happyqotd-production
       EventSources__Sources__5__ApiKey: ${HAPPYQOTD_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__6__Name: missioncontrol-agent-production
+      EventSources__Sources__6__ApiKey: ${MISSIONCONTROL_AGENT_MISSION_CONTROL_KEY}
 
     depends_on:
       rabbitmq:
@@ -374,6 +381,7 @@ services:
       Gopher__MaxConcurrentConnections: 64
       Gopher__MaxSelectorBytes: 4096
       Gopher__RequestTimeoutSeconds: 15
+      Gopher__TelemetryIgnoredRemoteAddress: "172.21.0.1"
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080

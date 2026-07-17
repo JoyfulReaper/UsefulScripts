@@ -320,6 +320,9 @@ services:
       EventSources__Sources__6__Name: missioncontrol-agent-production
       EventSources__Sources__6__ApiKey: ${MISSIONCONTROL_AGENT_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__7__Name: missioncontrol-dashboard-production
+      EventSources__Sources__7__ApiKey: ${MISSIONCONTROL_DASHBOARD_MISSION_CONTROL_KEY}
+
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -418,9 +421,16 @@ services:
       Dashboard__Authentication__MaxFailedAttempts: 5
       Dashboard__Authentication__LockoutMinutes: 15
 
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://gateway:8080
+      MissionControl__ApiKey: ${MISSIONCONTROL_DASHBOARD_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
       DOTNET_EnableDiagnostics: "0"
 
     depends_on:
+      gateway:
+        condition: service_started
       archive:
         condition: service_healthy
 

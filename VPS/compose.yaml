@@ -428,7 +428,7 @@ services:
       - dashboard-data:/app/data
 
     ports:
-      - "127.0.0.1:5194:8080"
+      - "127.0.0.1:5195:8080"
 
     cap_drop:
       - ALL

@@ -1,0 +1,58 @@
+services:
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    environment:
+      APP_URL: https://beszel.kgivler.com
+
+    ports:
+      - "127.0.0.1:8090:8090"
+
+    volumes:
+      - ./beszel_data:/beszel_data
+      - ./beszel_socket:/beszel_socket
+
+    security_opt:
+      - no-new-privileges:true
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: beszel-agent
+    restart: unless-stopped
+
+    network_mode: host
+    security_opt:
+      - apparmor:unconfined
+
+    environment:
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: http://127.0.0.1:8090
+      TOKEN: ${BESZEL_TOKEN}
+      KEY: ${BESZEL_KEY}
+
+      LOG_LEVEL: debug
+      SERVICE_PATTERNS: "randomsteam*,cloudflared*,happy*,mission*"
+    volumes:
+      - ./beszel_agent_data:/var/lib/beszel-agent
+      - ./beszel_socket:/beszel_socket
+
+      # Docker container monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # systemd service monitoring
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+      - /var/run/systemd/private:/var/run/systemd/private:ro

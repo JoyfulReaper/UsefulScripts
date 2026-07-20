@@ -457,6 +457,10 @@ services:
       Archive__BaseUrl: http://archive:8080/
       Agent__BaseUrl: https://status-api.kgivler.com/
 
+      GitActivityApi__Enabled: "true"
+      GitActivityApi__BaseUrl: http://gitactivity:8080/
+      GitActivityApi__ApiKey: ${GITACTIVITY_API_KEY}
+
       Dashboard__Authentication__DatabaseFileName: dashboard-auth.db
       Dashboard__Authentication__BasePath: /app/data
       Dashboard__Authentication__DataProtectionKeysPath: /app/data/data-protection
@@ -478,6 +482,8 @@ services:
       gateway:
         condition: service_started
       archive:
+        condition: service_healthy
+      gitactivity:
         condition: service_healthy
 
     volumes:

@@ -166,6 +166,7 @@ services:
       GitActivity__AllowedRepositories__15: JoyfulReaper/WhatShouldIWorkOnToday
       GitActivity__AllowedRepositories__16: JoyfulReaper/UsefulScripts
       GitActivity__AllowedRepositories__17: JoyfulReaper/HappyDaytime
+      GitActivity__AllowedRepositories__18: JoyfulReaper/Mycelium
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master

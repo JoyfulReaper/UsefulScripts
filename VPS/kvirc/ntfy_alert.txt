@@ -1,0 +1,22 @@
+%nick = $0
+%message = $3
+%channel = $target
+%payload_file = C:/Users/me/AppData/Local/Temp/kvirc-ntfy.txt
+
+if((%channel != "##JoyfulReaper-dev") && (%channel != "#RandomSteamGame"))
+{
+    return
+}
+
+if($window.hasUserFocus)
+{
+    return
+}
+
+snd.play C:/Users/me/Downloads/WAV_Glass.wav
+
+%payload = "%nick in %channel: %message"
+
+file.write "%payload_file" "%payload"
+
+exec -q (curl.exe -sS -u :tk_abrain --data-binary \@%payload_file https://ntfy.kgivler.com/irc-notify)

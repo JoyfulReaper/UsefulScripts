@@ -106,7 +106,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
   gitactivity:
     build:
@@ -256,7 +256,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
     networks:
       - backend
@@ -317,7 +317,7 @@ services:
 
 
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -480,7 +480,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
       archive:
         condition: service_healthy
       gitactivity:
@@ -570,7 +570,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
     networks:
       - backend
@@ -648,7 +648,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
   happyfinger:
     build:
@@ -710,7 +710,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
     networks:
       - backend
@@ -769,7 +769,7 @@ services:
 
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
 
     networks:
       - backend

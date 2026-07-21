@@ -3,6 +3,8 @@
 Useful Scripts contains small administration helpers and the Docker Compose
 configuration used for the services on the JoyfulReaper VPS. It is deployment
 configuration, not a source-of-truth repository for the applications it runs.
+Most files here are either host-side utilities or build contexts staged for the
+VPS deployment pipeline.
 
 ## Repository layout
 
@@ -10,13 +12,22 @@ configuration, not a source-of-truth repository for the applications it runs.
 | --- | --- |
 | `VPS/docker-compose.yaml` | Production-oriented Compose model for the VPS service stack. |
 | `VPS/<application>/` | Dockerfiles, NuGet configuration, and build-context support files staged for individual applications. |
+| `VPS/<application>/local-nuget/` | Offline or pinned NuGet packages copied into the container build context. |
 | `VPS/Beszel/compose.yaml` | Separate Beszel deployment configuration. |
 | `bash/memory.sh` | Linux host, systemd service, container, memory, and disk usage snapshot. |
 | `powershell/iis_error_search.ps1` | Searches application logs and parsed IIS W3C logs for recent errors. |
+| `kvirc/ntfy_alert.txt` | IRC notification hook that posts channel activity to ntfy when the local client is unfocused. |
 
 Application source and deployment-only files may be supplied to the VPS build
 contexts separately. Confirm each referenced Dockerfile and source tree is
 present before building.
+
+## What this repo is for
+
+- Deploying and maintaining the JoyfulReaper VPS service stack
+- Running quick health and diagnostics scripts on Linux and Windows hosts
+- Keeping small support files, such as IRC alert hooks and pinned NuGet
+  packages, close to the deployment configuration they support
 
 ## VPS stack
 
@@ -116,6 +127,10 @@ Run the IIS/application error search from PowerShell:
 
 Use `-AppLogPaths`, `-IisLogPaths`, `-AppPatterns`, and `-IisStatusCodes` to
 override the defaults.
+
+The `kvirc/ntfy_alert.txt` snippet is a client-side hook for IRC notifications.
+It only sends alerts for the configured channels, skips notifications when the
+window is focused, and posts the message text to the ntfy endpoint.
 
 ## Security notes
 

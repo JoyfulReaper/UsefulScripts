@@ -16,6 +16,7 @@ VPS deployment pipeline.
 | `VPS/Beszel/compose.yaml` | Separate Beszel deployment configuration. |
 | `bash/memory.sh` | Linux host, systemd service, container, memory, and disk usage snapshot. |
 | `powershell/iis_error_search.ps1` | Searches application logs and parsed IIS W3C logs for recent errors. |
+| `powershell/Clean-DotNetBuildArtifacts.ps1` | Removes `bin` and `obj` directories under a chosen root to reclaim build space. |
 | `kvirc/ntfy_alert.txt` | IRC notification hook that posts channel activity to ntfy when the local client is unfocused. |
 
 Application source and deployment-only files may be supplied to the VPS build
@@ -127,6 +128,15 @@ Run the IIS/application error search from PowerShell:
 
 Use `-AppLogPaths`, `-IisLogPaths`, `-AppPatterns`, and `-IisStatusCodes` to
 override the defaults.
+
+Run the .NET build artifact cleanup helper from PowerShell:
+
+```powershell
+.\powershell\Clean-DotNetBuildArtifacts.ps1 -Root C:\GitHub -WhatIf
+.\powershell\Clean-DotNetBuildArtifacts.ps1 -Root C:\GitHub
+```
+
+Use `-WhatIf` first to preview the directories that would be removed.
 
 The `kvirc/ntfy_alert.txt` snippet is a client-side hook for IRC notifications.
 It only sends alerts for the configured channels, skips notifications when the

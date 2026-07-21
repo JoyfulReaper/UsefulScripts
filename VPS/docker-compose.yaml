@@ -62,12 +62,18 @@ services:
     network_mode: host
 
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:5193/health/ready"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://localhost:8080/health/ready"
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
-
 
     environment:
       ASPNETCORE_ENVIRONMENT: Production

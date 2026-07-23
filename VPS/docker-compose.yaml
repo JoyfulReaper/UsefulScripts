@@ -264,6 +264,58 @@ services:
     networks:
       - backend
 
+  happydiscard:
+    build:
+      context: ./HappyDiscard
+      dockerfile: Dockerfile
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+    restart: unless-stopped
+    init: true
+
+    environment:
+      DOTNET_ENVIRONMENT: Production
+
+      Discard__ListenAddress: 0.0.0.0
+      Discard__Port: 9009
+      Discard__MaxConcurrentConnections: 64
+      Discard__RequestTimeoutSeconds: 15
+      Discard__MaxBytesPerConnection: 1048576
+      Discard__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://gateway:8080
+      MissionControl__ApiKey: ${HAPPYDISCARD_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
+      DOTNET_EnableDiagnostics: "0"
+
+    ports:
+      - "9:9009/tcp"
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+    networks:
+      - backend
+
   rabbitmq:
     image: rabbitmq:4-management
     hostname: rabbitmq
@@ -368,6 +420,9 @@ services:
 
       EventSources__Sources__8__Name: missioncontrol-dashboard-production
       EventSources__Sources__8__ApiKey: ${MISSIONCONTROL_DASHBOARD_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__9__Name: happydiscard-production
+      EventSources__Sources__9__ApiKey: ${HAPPYDISCARD_MISSION_CONTROL_KEY}
 
     depends_on:
       rabbitmq:

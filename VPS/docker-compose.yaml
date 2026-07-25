@@ -23,8 +23,6 @@ services:
     volumes:
       - ./config/ntfy:/etc/ntfy:ro
       - ./data/ntfy:/var/lib/ntfy
-    expose:
-      - "80"
     ports:
       - "127.0.0.1:5197:80"
     healthcheck:
@@ -68,7 +66,7 @@ services:
           "curl",
           "--fail",
           "--silent",
-          "http://localhost:8080/health/ready"
+          "http://127.0.0.1:5193/health/ready"
         ]
       interval: 15s
       timeout: 5s
@@ -81,6 +79,7 @@ services:
 
       QOTD__ListenAddress: 0.0.0.0
       QOTD__Port: 17
+      QOTD__EnableTcpServer: "true"
       QOTD__ApiBaseUrl: http://127.0.0.1:5193
       QOTD__MaxConcurrentConnections: 64
       QOTD__RequestTimeoutSeconds: 15
@@ -605,6 +604,7 @@ services:
       Daytime__ListenAddress: 0.0.0.0
       Daytime__Port: 1313
       Daytime__MaxConcurrentConnections: 100
+      Daytime__RequestTimeoutSeconds: 15
       Daytime__TelemetryIgnoredRemoteAddress: "172.21.0.1"
 
       MissionControl__Enabled: "true"
@@ -807,8 +807,10 @@ services:
       MissionControl__ApiKey: ${HAPPYGOPHER_MISSION_CONTROL_KEY}
       MissionControl__TimeoutMilliseconds: 1000
 
+    # The host content directory replaces the sample content bundled in the image.
+    # Keep the VPS gophermap in sync with the desired production menu.
     volumes:
-       - /var/lib/happygopher/content:/app/content:ro
+      - /var/lib/happygopher/content:/app/content:ro
 
     ports:
       - "70:70/tcp"

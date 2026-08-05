@@ -86,7 +86,7 @@ services:
 
       QOTD__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
       QOTD__TelemetryIgnoredRemoteAddresses__1: "127.0.0.1"
-      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.4"
+      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.9"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -172,6 +172,8 @@ services:
       GitActivity__AllowedRepositories__16: JoyfulReaper/UsefulScripts
       GitActivity__AllowedRepositories__17: JoyfulReaper/HappyDaytime
       GitActivity__AllowedRepositories__18: JoyfulReaper/Mycelium
+      GitActivity__AllowedRepositories__19: JoyfulReaper/Bloat
+
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -793,7 +795,8 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
 
-      Gopher__ListenAddress: 0.0.0.0
+      Gopher__ListenAddress: "::"
+      Gopher__DualMode: "true"
       Gopher__Port: 70
       Gopher__PublicHost: gopher.kgivler.com
       Gopher__ContentRoot: /app/content
@@ -806,6 +809,10 @@ services:
       MissionControl__BaseUrl: http://gateway:8080
       MissionControl__ApiKey: ${HAPPYGOPHER_MISSION_CONTROL_KEY}
       MissionControl__TimeoutMilliseconds: 1000
+
+      HappyQotd__BaseURL: "https://qotd-api.kgivler.com"
+      HappyQotd__TimeoutMilliseconds: 1000
+      HappyQotd__Enabled: true
 
     # The host content directory replaces the sample content bundled in the image.
     # Keep the VPS gophermap in sync with the desired production menu.

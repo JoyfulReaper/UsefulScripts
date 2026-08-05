@@ -86,7 +86,7 @@ services:
 
       QOTD__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
       QOTD__TelemetryIgnoredRemoteAddresses__1: "127.0.0.1"
-      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.9"
+      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.12"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -803,7 +803,7 @@ services:
       Gopher__MaxConcurrentConnections: 64
       Gopher__MaxSelectorBytes: 4096
       Gopher__RequestTimeoutSeconds: 15
-      Gopher__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Gopher__TelemetryIgnoredSelectors__0: "/healthz"
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080
@@ -840,6 +840,7 @@ services:
 
 networks:
   backend:
+    enable_ipv6: true
 
 volumes:
   rabbitmq-data:

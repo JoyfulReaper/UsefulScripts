@@ -820,7 +820,7 @@ services:
     # Keep the VPS gophermap in sync with the desired production menu.
     volumes:
       - /var/lib/happygopher/content:/app/content:ro
-      - ./happygopher-plugins:/app/plugins:ro
+      - /var/lib/happygopher/plugins:/app/plugins:ro
 
     ports:
       - target: 70

@@ -84,8 +84,8 @@ services:
       QOTD__MaxConcurrentConnections: 64
       QOTD__RequestTimeoutSeconds: 15
 
-      QOTD__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
-      QOTD__TelemetryIgnoredRemoteAddresses__1: "127.0.0.1"
+      QOTD__TelemetryIgnoredRemoteAddresses__0: "127.0.0.1"
+      QOTD__TelemetryIgnoredRemoteAddresses__1: "172.21.0.11"
       QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.12"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
@@ -814,13 +814,24 @@ services:
       HappyQotd__TimeoutMilliseconds: 1000
       HappyQotd__Enabled: true
 
+      Guestbook__Enabled: true
+
     # The host content directory replaces the sample content bundled in the image.
     # Keep the VPS gophermap in sync with the desired production menu.
     volumes:
       - /var/lib/happygopher/content:/app/content:ro
+      - ./happygopher-plugins:/app/plugins:ro
 
     ports:
-      - "70:70/tcp"
+      - target: 70
+        published: "70"
+        host_ip: "142.4.38.224"
+        protocol: tcp
+
+      - target: 70
+        published: "70"
+        host_ip: "2607:f2d8:8416:10c1::a"
+        protocol: tcp
 
     cap_drop:
       - ALL

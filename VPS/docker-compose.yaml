@@ -173,7 +173,7 @@ services:
       GitActivity__AllowedRepositories__17: JoyfulReaper/HappyDaytime
       GitActivity__AllowedRepositories__18: JoyfulReaper/Mycelium
       GitActivity__AllowedRepositories__19: JoyfulReaper/Bloat
-
+      GitActivity__AllowedRepositories__20: JoyfulReaper/HappyGemini
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -424,6 +424,9 @@ services:
 
       EventSources__Sources__9__Name: happydiscard-production
       EventSources__Sources__9__ApiKey: ${HAPPYDISCARD_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__10__Name: "[REDACTED FOR GIT]"
+      EventSources__Sources__10__ApiKey: ${[REDACTED FOR GIT]}
 
     depends_on:
       rabbitmq:
@@ -815,12 +818,14 @@ services:
       HappyQotd__Enabled: true
 
       Guestbook__Enabled: true
+      Guestbook__DataPath: /app/data/guestbook.jsonl
 
     # The host content directory replaces the sample content bundled in the image.
     # Keep the VPS gophermap in sync with the desired production menu.
     volumes:
       - /var/lib/happygopher/content:/app/content:ro
       - /var/lib/happygopher/plugins:/app/plugins:ro
+      - /var/lib/happygopher/data:/app/data
 
     ports:
       - target: 70

@@ -2,6 +2,63 @@
 name: joyful-stack
 
 services:
+
+  happygemini:
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    image: joyful-stack-happygemini
+    restart: unless-stopped
+
+    ports:
+      - "1965:1965"
+
+    environment:
+      Gemini__ListenAddress: "::"
+      Gemini__DualMode: "true"
+      Gemini__Port: "1965"
+      Gemini__Hostnames__0: "gemini.kgivler.com"
+
+      Gemini__CertificatePath: "/app/certs/happygemini.pfx"
+
+      GeminiContent__ContentDirectory: "/app/content"
+      GeminiContent__IndexFile: "index.gmi"
+
+      GeminiPages__PluginDirectory: "/app/plugins"
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: "http://gateway:8080"
+      MissionControl__ApiKey: "${HAPPYGEMINI_MISSION_CONTROL_KEY}"
+      MissionControl__TimeoutMilliseconds: "1000"
+
+    volumes:
+      - /var/lib/happygemini/content:/app/content:ro
+      - /var/lib/happygemini/certs:/app/certs:ro
+      - /var/lib/happygemini/plugins:/app/plugins:ro
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+    networks:
+      - backend
+
+
   ntfy:
 
     deploy:
@@ -428,6 +485,9 @@ services:
       EventSources__Sources__10__Name: "[REDACTED FOR GIT]"
       EventSources__Sources__10__ApiKey: ${[REDACTED FOR GIT]}
 
+      EventSources__Sources__11__Name: "happygemini-production"
+      EventSources__Sources__11__ApiKey: ${HAPPYGEMINI_MISSION_CONTROL_KEY}
+
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -806,6 +866,7 @@ services:
       Gopher__MaxConcurrentConnections: 64
       Gopher__MaxSelectorBytes: 4096
       Gopher__RequestTimeoutSeconds: 15
+      Gopher__ResponseTimeoutSeconds: "60"
       Gopher__TelemetryIgnoredSelectors__0: "/healthz"
 
       MissionControl__Enabled: "true"

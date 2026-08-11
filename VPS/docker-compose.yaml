@@ -18,9 +18,7 @@ services:
 
     image: joyful-stack-happygemini
     restart: unless-stopped
-
-    ports:
-      - "1965:1965"
+    network_mode: host
 
     environment:
       Gemini__ListenAddress: "::"
@@ -36,7 +34,7 @@ services:
       GeminiPages__PluginDirectory: "/app/plugins"
 
       MissionControl__Enabled: "true"
-      MissionControl__BaseUrl: "http://gateway:8080"
+      MissionControl__BaseUrl: "http://127.0.0.1:5190"
       MissionControl__ApiKey: "${HAPPYGEMINI_MISSION_CONTROL_KEY}"
       MissionControl__TimeoutMilliseconds: "1000"
 
@@ -54,9 +52,6 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-
-    networks:
-      - backend
 
 
   ntfy:
@@ -231,6 +226,7 @@ services:
       GitActivity__AllowedRepositories__18: JoyfulReaper/Mycelium
       GitActivity__AllowedRepositories__19: JoyfulReaper/Bloat
       GitActivity__AllowedRepositories__20: JoyfulReaper/HappyGemini
+      GitActivity__AllowedRepositories__21: JoyfulReaper/SmolSearch
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -482,8 +478,8 @@ services:
       EventSources__Sources__9__Name: happydiscard-production
       EventSources__Sources__9__ApiKey: ${HAPPYDISCARD_MISSION_CONTROL_KEY}
 
-      EventSources__Sources__10__Name: "[REDACTED FOR GIT]"
-      EventSources__Sources__10__ApiKey: ${[REDACTED FOR GIT]}
+      EventSources__Sources__10__Name: [REDACTED FOR GIT]
+      EventSources__Sources__10__ApiKey: [REDACTED FOR GIT]
 
       EventSources__Sources__11__Name: "happygemini-production"
       EventSources__Sources__11__ApiKey: ${HAPPYGEMINI_MISSION_CONTROL_KEY}

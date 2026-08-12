@@ -219,17 +219,13 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
 
-      RabbitMq__HostName: rabbitmq
-      RabbitMq__Port: 5672
-      RabbitMq__UserName: ${RABBITMQ_USER}
-      RabbitMq__Password: ${RABBITMQ_PASSWORD}
-      RabbitMq__VirtualHost: "/mission-control"
-      RabbitMq__ClientProvidedName: mission-control-git-activity-production
+      Nats__Url: nats://nats:4222
+      Nats__ClientName: mission-control-git-activity-production
+      Nats__StreamName: MISSION_CONTROL_EVENTS
 
-      RabbitMqConsumer__ExchangeName: kgivler.events
-      RabbitMqConsumer__QueueName: mission-control.git-activity
-      RabbitMqConsumer__RoutingKey: github.push.received
-      RabbitMqConsumer__PrefetchCount: 10
+      NatsConsumer__DurableName: mission-control-git-activity
+      NatsConsumer__FilterSubject: events.github.push.received
+      NatsConsumer__MaxDeliveries: 5
 
       GitActivity__DatabaseFileName: git-activity.db
       GitActivity__BasePath: /data
@@ -264,8 +260,7 @@ services:
       GitActivity__AllowedBranches__3: feature-dashboard
 
     depends_on:
-      rabbitmq:
-        condition: service_healthy
+      - nats
 
     volumes:
       - gitactivity-data:/data
@@ -288,7 +283,7 @@ services:
       - backend
 
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/live"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -471,12 +466,9 @@ services:
       GitHubWebhook__AllowedOwner: "JoyfulReaper"
       GitHubWebhook__MaxPayloadBytes: "1048576"
 
-      RabbitMq__HostName: rabbitmq
-      RabbitMq__Port: 5672
-      RabbitMq__UserName: ${RABBITMQ_USER}
-      RabbitMq__Password: ${RABBITMQ_PASSWORD}
-      RabbitMq__VirtualHost: "/mission-control"
-      RabbitMq__ClientProvidedName: mission-control-gateway-production
+      Nats__Url: nats://nats:4222
+      Nats__ClientName: mission-control-gateway-production
+      Nats__StreamName: MISSION_CONTROL_EVENTS
 
       EventSources__Sources__0__Name: happygopher-production
       EventSources__Sources__0__ApiKey: ${HAPPYGOPHER_MISSION_CONTROL_KEY}
@@ -515,8 +507,7 @@ services:
       EventSources__Sources__11__ApiKey: ${HAPPYGEMINI_MISSION_CONTROL_KEY}
 
     depends_on:
-      rabbitmq:
-        condition: service_healthy
+      - nats
 
     ports:
       - "127.0.0.1:5190:8080"
@@ -555,19 +546,19 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
 
-      RabbitMq__HostName: rabbitmq
-      RabbitMq__Port: 5672
-      RabbitMq__UserName: ${RABBITMQ_USER}
-      RabbitMq__Password: ${RABBITMQ_PASSWORD}
-      RabbitMq__VirtualHost: "/mission-control"
-      RabbitMq__ClientProvidedName: mission-control-archive-production
+      Nats__Url: nats://nats:4222
+      Nats__ClientName: mission-control-archive-production
+      Nats__StreamName: MISSION_CONTROL_EVENTS
+
+      NatsConsumer__DurableName: mission-control-archive
+      NatsConsumer__FilterSubject: events.>
+      NatsConsumer__MaxDeliveries: 5
 
       EventArchive__DatabaseFileName: mission-control.db
       EventArchive__BasePath: /data
 
     depends_on:
-      rabbitmq:
-        condition: service_healthy
+      - nats
 
     volumes:
       - archive-data:/data

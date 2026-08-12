@@ -3,6 +3,32 @@ name: joyful-stack
 
 services:
 
+  nats:
+    image: nats:2.14.3-alpine
+    restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+    command:
+      - "-js"
+      - "-sd"
+      - "/data/jetstream"
+
+    volumes:
+      - nats-data:/data/jetstream
+
+    networks:
+      - backend
+
   happygemini:
 
     deploy:
@@ -16,7 +42,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
+    build:
+      context: ./HappyGemini
+      dockerfile: Dockerfile
     image: joyful-stack-happygemini
+
     restart: unless-stopped
     network_mode: host
 
@@ -917,6 +947,7 @@ networks:
 
 volumes:
   rabbitmq-data:
+  nats-data:
   archive-data:
   gitactivity-data:
   dashboard-data:

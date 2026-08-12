@@ -395,41 +395,6 @@ services:
     networks:
       - backend
 
-  rabbitmq:
-    image: rabbitmq:4-management
-    hostname: rabbitmq
-    restart: unless-stopped
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-    deploy:
-      resources:
-        limits:
-          memory: 768M
-
-
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-      RABBITMQ_DEFAULT_VHOST: "/mission-control"
-
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-    networks:
-      - backend
-
   gateway:
     build:
       context: ./MissionControl
@@ -937,7 +902,6 @@ networks:
     enable_ipv6: true
 
 volumes:
-  rabbitmq-data:
   nats-data:
   archive-data:
   gitactivity-data:

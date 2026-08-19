@@ -22,6 +22,8 @@ services:
       - "-js"
       - "-sd"
       - "/data/jetstream"
+      - "-m"
+      - "8222"
 
     volumes:
       - nats-data:/data/jetstream
@@ -465,8 +467,8 @@ services:
       EventSources__Sources__9__Name: happydiscard-production
       EventSources__Sources__9__ApiKey: ${HAPPYDISCARD_MISSION_CONTROL_KEY}
 
-      EventSources__Sources__10__Name: [REDACTED FOR GIT]
-      EventSources__Sources__10__ApiKey: [REDACTED FOR GIT]
+      EventSources__Sources__10__Name: "happygopher-mystery"
+      EventSources__Sources__10__ApiKey: ${MYSTERYGOPHER_MISSION_CONTROL_KEY}
 
       EventSources__Sources__11__Name: "happygemini-production"
       EventSources__Sources__11__ApiKey: ${HAPPYGEMINI_MISSION_CONTROL_KEY}
@@ -534,6 +536,69 @@ services:
     networks:
       - backend
 
+  wsiwot:
+    build:
+      context: ./WhatShouldIWorkOnToday
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+    init: true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+
+      Database__Path: /data/WhatShouldIWorkOnToday.db
+
+      Auth__Username: ${WSIWOT_USERNAME}
+      Auth__Password: ${WSIWOT_PASSWORD}
+
+      Api__Key: ${WSIWOT_API_KEY}
+
+      TZ: America/New_York
+      DOTNET_EnableDiagnostics: "0"
+
+    volumes:
+      - /var/lib/wsiwot:/data
+
+    ports:
+      - "127.0.0.1:5080:8080"
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://localhost:8080/health/live"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - backend
+
   dashboard:
     build:
       context: ./MissionControl
@@ -565,6 +630,15 @@ services:
       GitActivityApi__BaseUrl: http://gitactivity:8080/
       GitActivityApi__ApiKey: ${GITACTIVITY_API_KEY}
 
+      WorkPlanningApi__BaseUrl: http://wsiwot:8080/
+      WorkPlanningApi__ApiKey: ${WSIWOT_API_KEY}
+
+      GreenCloud__Enabled: "true"
+      GreenCloud__BaseUrl: https://cp.green.cloud/
+      GreenCloud__ServerId: b1accaf4-4263-4ec5-ae3b-d29cc880d98d
+      GreenCloud__ApiToken: ${GREEN_CLOUD_TOKEN}
+      GreenCloud__PollSeconds: 300
+
       Dashboard__Authentication__DatabaseFileName: dashboard-auth.db
       Dashboard__Authentication__BasePath: /app/data
       Dashboard__Authentication__DataProtectionKeysPath: /app/data/data-protection
@@ -588,6 +662,8 @@ services:
       archive:
         condition: service_healthy
       gitactivity:
+        condition: service_healthy
+      wsiwot:
         condition: service_healthy
 
     volumes:
@@ -871,6 +947,11 @@ services:
       - /var/lib/happygopher/data:/app/data
 
     ports:
+      - target: 70
+        published: "70"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+
       - target: 70
         published: "70"
         host_ip: "142.4.38.224"

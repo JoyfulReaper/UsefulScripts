@@ -169,7 +169,7 @@ services:
       QOTD__RequestTimeoutSeconds: 15
 
       QOTD__TelemetryIgnoredRemoteAddresses__0: "127.0.0.1"
-      QOTD__TelemetryIgnoredRemoteAddresses__1: "172.21.0.11"
+      QOTD__TelemetryIgnoredRemoteAddresses__1: "172.21.0.10"
       QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.12"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
@@ -473,6 +473,9 @@ services:
       EventSources__Sources__11__Name: "happygemini-production"
       EventSources__Sources__11__ApiKey: ${HAPPYGEMINI_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__12__Name: wsiwot-production
+      EventSources__Sources__12__ApiKey: ${WSIWOT_MISSION_CONTROL_KEY}
+
     depends_on:
       - nats
 
@@ -556,6 +559,11 @@ services:
           memory: 256M
 
     environment:
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://gateway:8080/
+      MissionControl__ApiKey: ${WSIWOT_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: 8080
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"

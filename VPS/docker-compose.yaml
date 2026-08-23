@@ -316,8 +316,10 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
 
-      Echo__ListenAddress: 0.0.0.0
+      Echo__ListenAddress: "::"
+      Echo__DualMode: "true"
       Echo__Port: 7007
+      Echo__UdpEnabled: "false"
       Echo__MaxConcurrentConnections: 64
       Echo__RequestTimeoutSeconds: 15
       Echo__MaxBytesPerConnection: 1048576
@@ -367,8 +369,11 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
 
-      Discard__ListenAddress: 0.0.0.0
+      Discard__ListenAddress: "::"
       Discard__Port: 9009
+      Discard__DualMode: "true"
+      Discard__UdpEnabled: "true"
+      Discard__UdpPort: 9009
       Discard__MaxConcurrentConnections: 64
       Discard__RequestTimeoutSeconds: 15
       Discard__MaxBytesPerConnection: 1048576
@@ -382,7 +387,10 @@ services:
       DOTNET_EnableDiagnostics: "0"
 
     ports:
-      - "9:9009/tcp"
+      - "0.0.0.0:9:9009/tcp"
+      - "[::]:9:9009/tcp"
+      - "0.0.0.0:9:9009/udp"
+      - "[::]:9:9009/udp"
 
     cap_drop:
       - ALL
@@ -567,6 +575,13 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: 8080
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+
+      GitHubSync__Enabled: "true"
+      GitHubSync__Owner: "JoyfulReaper"
+      GitHubSync__Repository: "wsiwot-sync"
+      GitHubSync__Branch: "main"
+      GitHubSync__Token: ${WSIWOT_GITHUB_SYNC_TOKEN}
+      GitHubSync__PollIntervalSeconds: "600"
 
       Database__Path: /data/WhatShouldIWorkOnToday.db
 

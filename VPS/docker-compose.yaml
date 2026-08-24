@@ -32,67 +32,63 @@ services:
       - backend
 
   happygemini:
-
     deploy:
       resources:
         limits:
           memory: 256M
-
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
     build:
       context: ./HappyGemini
       dockerfile: Dockerfile
     image: joyful-stack-happygemini
-
     restart: unless-stopped
     network_mode: host
-
     environment:
+      # Main configurations
       Gemini__ListenAddress: "::"
       Gemini__DualMode: "true"
       Gemini__Port: "1965"
-      Gemini__Hostnames__0: "gemini.kgivler.com"
-
       Gemini__CertificatePath: "/app/certs/happygemini.pfx"
-
       GeminiContent__ContentDirectory: "/app/content"
       GeminiContent__IndexFile: "index.gmi"
-
       GeminiPages__PluginDirectory: "/app/plugins"
 
+      # Host 0
+      Gemini__Hostnames__0: "gemini.kgivler.com"
+
+      # Host 1 (Merged from Source 1)
+      Gemini__Hostnames__1: "pipes.verymad.net"
+      Gemini__Certificates__pipes.verymad.net__Path: "/app/certs/pipes.verymad.net.pfx"
+      GeminiContent__Hosts__pipes.verymad.net__ContentDirectory: "/app/content-pipes"
+      GeminiContent__Hosts__pipes.verymad.net__UseGlobalPages: "false"
+
+      # Mission Control
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: "http://127.0.0.1:5190"
       MissionControl__ApiKey: "${HAPPYGEMINI_MISSION_CONTROL_KEY}"
       MissionControl__TimeoutMilliseconds: "1000"
-
     volumes:
       - /var/lib/happygemini/content:/app/content:ro
       - /var/lib/happygemini/certs:/app/certs:ro
       - /var/lib/happygemini/plugins:/app/plugins:ro
-
+      - /var/lib/happygemini/content-pipes:/app/content-pipes:ro # Merged volume
     cap_drop:
       - ALL
-
     security_opt:
       - no-new-privileges:true
-
     depends_on:
       gateway:
         condition: service_healthy
 
-
   ntfy:
-
     deploy:
       resources:
         limits:
           memory: 256M
-
     logging:
       driver: json-file
       options:
@@ -161,9 +157,13 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://127.0.0.1:5193
 
-      QOTD__ListenAddress: 0.0.0.0
+      QOTD__ListenAddress: "::"
       QOTD__Port: 17
+      QOTD__DualMode: "true"
       QOTD__EnableTcpServer: "true"
+      QOTD__EnableUdpServer: "true"
+      QOTD__TruncateQuoteResponses: "true"
+      QOTD__MaximumQuoteResponseCharacters: "512"
       QOTD__ApiBaseUrl: http://127.0.0.1:5193
       QOTD__MaxConcurrentConnections: 64
       QOTD__RequestTimeoutSeconds: 15
@@ -1000,6 +1000,37 @@ services:
 
     networks:
       - backend
+
+  happygopher-mystery:
+    image: joyful-stack-happygopher
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    environment:
+      Gopher__ListenAddress: "2607:f2d8:8416:10c1::dead"
+      Gopher__DualMode: "false"
+      Gopher__Port: "70"
+      Gopher__PublicHost: "pipes.verymad.net"
+      Gopher__ContentRoot: "/app/content"
+      Gopher__MaxConcurrentConnections: "64"
+      Gopher__MaxSelectorBytes: "4096"
+      Gopher__MaxInputBytes: "1024"
+      Gopher__RequestTimeoutSeconds: "15"
+      Gopher__ResponseTimeoutSeconds: "60"
+      GopherPages__PluginDirectory: "/app/plugins"
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: "http://127.0.0.1:5190"
+      MissionControl__ApiKey: "${MYSTERYGOPHER_MISSION_CONTROL_KEY}"
+      MissionControl__TimeoutMilliseconds: "1000"
+      HappyQotd__Enabled: "false"
+      Guestbook__Enabled: "false"
+    volumes:
+      - /var/lib/happygopher-mystery/content:/app/content:ro
+      - /var/lib/happygopher-mystery/plugins:/app/plugins:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
 
 networks:
   backend:

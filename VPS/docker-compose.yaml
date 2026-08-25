@@ -255,6 +255,8 @@ services:
       GitActivity__AllowedRepositories__19: JoyfulReaper/Bloat
       GitActivity__AllowedRepositories__20: JoyfulReaper/HappyGemini
       GitActivity__AllowedRepositories__21: JoyfulReaper/SmolSearch
+      GitActivity__AllowedRepositories__22: JoyfulReaper/Vinculum
+      GitActivity__AllowedRepositories__23: JoyfulReaper/Random_Github
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -483,6 +485,9 @@ services:
 
       EventSources__Sources__12__Name: wsiwot-production
       EventSources__Sources__12__ApiKey: ${WSIWOT_MISSION_CONTROL_KEY}
+
+      EventSources__Sources__13__Name: randomgithub-production
+      EventSources__Sources__13__ApiKey: ${RANDOMGITHUB_MISSION_CONTROL_KEY}
 
     depends_on:
       - nats
@@ -776,6 +781,71 @@ services:
     networks:
       - backend
 
+  randomgithub:
+    image: joyful/randomgithub:${RANDOMGITHUB_IMAGE_TAG}
+
+    build:
+      context: ./Random_Github
+      dockerfile: Dockerfile
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    restart: unless-stopped
+    init: true
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+    network_mode: host
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:5183
+
+      AllowedHosts: randomgit.kgivler.com
+
+      GitHub__InitialMaxRepositoryId: "1100000000"
+      GitHub__Token: ${RANDOMGITHUB_GITHUB_TOKEN}
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://127.0.0.1:5190
+      MissionControl__ApiKey: ${RANDOMGITHUB_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: "1000"
+
+      DOTNET_EnableDiagnostics: "0"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--header",
+          "Host: randomgit.kgivler.com",
+          "http://127.0.0.1:5183/health/live"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      gateway:
+        condition: service_healthy
+
   randomsteam:
     image: joyful/randomsteam:${RANDOMSTEAM_IMAGE_TAG}
 
@@ -813,8 +883,10 @@ services:
       DataProtection__ApplicationName: RandomSteamGame
       DataProtection__KeysPath: /data-protection
 
-      Application__CommitSha: ${RANDOMSTEAM_COMMIT_SHA}
+      Application__CommitSha: ${RANDOMSTEAM_IMAGE_TAG}
       Application__DeploymentType: docker
+
+      Telemetry__VisitorHashKey: ${RANDOMSTEAM_VISITORHASHKEY}
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://127.0.0.1:5190

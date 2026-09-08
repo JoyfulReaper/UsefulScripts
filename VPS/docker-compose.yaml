@@ -752,8 +752,11 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
 
-      Daytime__ListenAddress: 0.0.0.0
+      Daytime__ListenAddress: "::"
+      Daytime__DualMode: "true"
       Daytime__Port: 1313
+      Daytime__UdpEnabled: "true"
+      Daytime__UdpPort: 1313
       Daytime__MaxConcurrentConnections: 100
       Daytime__RequestTimeoutSeconds: 15
       Daytime__TelemetryIgnoredRemoteAddress: "172.21.0.1"
@@ -766,7 +769,10 @@ services:
       DOTNET_EnableDiagnostics: "0"
 
     ports:
-      - "13:1313/tcp"
+      - "0.0.0.0:13:1313/tcp"
+      - "[::]:13:1313/tcp"
+      - "0.0.0.0:13:1313/udp"
+      - "[::]:13:1313/udp"
 
     cap_drop:
       - ALL

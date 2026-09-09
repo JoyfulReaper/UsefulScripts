@@ -30,6 +30,8 @@ services:
 
     networks:
       - backend
+    ports:
+      - "10.99.0.1:4222:4222"
 
   happygemini:
     deploy:
@@ -170,7 +172,7 @@ services:
 
       QOTD__TelemetryIgnoredRemoteAddresses__0: "127.0.0.1"
       QOTD__TelemetryIgnoredRemoteAddresses__1: "172.21.0.10"
-      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.12"
+      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.13"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -257,6 +259,7 @@ services:
       GitActivity__AllowedRepositories__21: JoyfulReaper/SmolSearch
       GitActivity__AllowedRepositories__22: JoyfulReaper/Vinculum
       GitActivity__AllowedRepositories__23: JoyfulReaper/Random_Github
+      GitActivity__AllowedRepositories__24: JoyfulReaper/freebsd-c-lab
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -494,6 +497,7 @@ services:
 
     ports:
       - "127.0.0.1:5190:8080"
+      - "10.99.0.1:5190:8080"
 
     networks:
       - backend
@@ -548,6 +552,7 @@ services:
 
     ports:
       - "127.0.0.1:5191:8080"
+      - "10.99.0.1:5191:8080"
 
     networks:
       - backend
@@ -824,6 +829,8 @@ services:
       MissionControl__ApiKey: ${RANDOMGITHUB_MISSION_CONTROL_KEY}
       MissionControl__TimeoutMilliseconds: "1000"
 
+      Telemetry__VisitorHashKey: ${RANDOMGITHUB_VISITORHASHKEY}
+
       DOTNET_EnableDiagnostics: "0"
 
     healthcheck:
@@ -851,6 +858,9 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+
+    volumes:
+      - /var/lib/randomgithub/data:/app/Data
 
   randomsteam:
     image: joyful/randomsteam:${RANDOMSTEAM_IMAGE_TAG}

@@ -1,0 +1,79 @@
+Host jumpbox
+    HostName 192.168.200.11
+    User joyfulreaper
+
+Host clanker
+    HostName 10.99.0.1
+    User joyfulreaper
+    IdentityFile ~/.ssh/greencloudkey
+
+Host clanker-jump
+    HostName 10.99.0.1
+    User joyfulreaper
+    IdentityFile ~/.ssh/greencloudkey
+    ProxyJump jumpbox
+
+Host freebsd-dev
+    HostName 10.99.0.4
+    User joyfulreaper
+
+Host freebsd-dev-jump
+    HostName 10.99.0.4
+    User joyfulreaper
+    ProxyJump jumpbox
+
+Host archBTW
+    HostName 10.99.0.5
+    User joyfulreaper
+
+Host archBTW-jump
+    HostName 10.99.0.5
+    User joyfulreaper
+    ProxyJump jumpbox
+
+Host scopecreep
+    HostName 10.99.0.9
+	IdentityFile ~/.ssh/ScopeCreep-fixed
+    User joyfulreaper
+
+Host scopecreep-jump
+    HostName 10.99.0.9
+	IdentityFile ~/.ssh/ScopeCreep-fixed
+    User joyfulreaper
+    ProxyJump jumpbox
+	
+Host molasses
+    HostName 10.99.0.10
+    User joyfulreaper
+
+Host molasses-jump
+    HostName 10.99.0.10
+    User joyfulreaper
+    ProxyJump jumpbox
+	
+Host tcpnoise
+    HostName 10.99.0.12
+    User joyfulreaper
+
+Host tcpnoise-jump
+    HostName 10.99.0.12
+    User joyfulreaper
+    ProxyJump jumpbox
+	
+Host freebsd-laptop
+    HostName 10.99.0.7
+    User joyfulreaper
+
+Host freebsd-laptop-jump
+    HostName 10.99.0.7
+    User joyfulreaper
+    ProxyJump jumpbox
+	
+Host arch-laptop
+    HostName 10.99.0.8
+    User joyfulreaper
+
+Host arch-laptop-jump
+    HostName 10.99.0.8
+    User joyfulreaper
+    ProxyJump jumpbox

@@ -32,6 +32,7 @@ services:
       - backend
     ports:
       - "10.99.0.1:4222:4222"
+      - "10.99.0.1:8222:8222"
 
   happygemini:
     deploy:
@@ -171,8 +172,7 @@ services:
       QOTD__RequestTimeoutSeconds: 15
 
       QOTD__TelemetryIgnoredRemoteAddresses__0: "127.0.0.1"
-      QOTD__TelemetryIgnoredRemoteAddresses__1: "172.21.0.10"
-      QOTD__TelemetryIgnoredRemoteAddresses__2: "172.21.0.13"
+      QOTD__TelemetryIgnoredRemoteAddresses__1: "72.72.164.63"
 
       QotdSecurity__AdminApiKey: ${HAPPYQOTD_ADMIN_API_KEY}
 
@@ -328,7 +328,8 @@ services:
       Echo__MaxConcurrentConnections: 64
       Echo__RequestTimeoutSeconds: 15
       Echo__MaxBytesPerConnection: 1048576
-      Echo__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Echo__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
+      Echo__TelemetryIgnoredRemoteAddresses__1: "72.72.164.63"
       Echo__BlockLoopbackConnections: true
 
       MissionControl__Enabled: "true"
@@ -382,7 +383,8 @@ services:
       Discard__MaxConcurrentConnections: 64
       Discard__RequestTimeoutSeconds: 15
       Discard__MaxBytesPerConnection: 1048576
-      Discard__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Discard__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
+      Discard__TelemetryIgnoredRemoteAddresses__1: "72.72.164.63"
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080
@@ -764,7 +766,8 @@ services:
       Daytime__UdpPort: 1313
       Daytime__MaxConcurrentConnections: 100
       Daytime__RequestTimeoutSeconds: 15
-      Daytime__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Daytime__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
+      Daytime__TelemetryIgnoredRemoteAddresses__1: "72.72.164.63"
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080
@@ -975,7 +978,8 @@ services:
       Finger__Port: 79
       Finger__MaxConcurrentConnections: 64
       Finger__RequestTimeoutSeconds: 15
-      Finger__TelemetryIgnoredRemoteAddress: "172.21.0.1"
+      Finger__TelemetryIgnoredRemoteAddresses__0: "172.21.0.1"
+      Finger__TelemetryIgnoredRemoteAddresses__1: "72.72.164.63"
 
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: http://gateway:8080

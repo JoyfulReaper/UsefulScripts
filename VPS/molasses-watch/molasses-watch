@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+set -u
+
+HOST="10.99.0.10"
+KUMA_URL="${KUMA_URL:-http://10.99.0.10:3001}"
+NTFY_URL="${NTFY_URL:-}"
+
+STATE_DIR="/var/lib/molasses-watch"
+HOST_STATE_FILE="$STATE_DIR/host-state"
+HOST_FAILURE_FILE="$STATE_DIR/host-failures"
+KUMA_STATE_FILE="$STATE_DIR/kuma-state"
+KUMA_FAILURE_FILE="$STATE_DIR/kuma-failures"
+
+FAILURE_THRESHOLD=3
+
+notify()
+{
+    local title="$1"
+    local message="$2"
+    local priority="$3"
+    local tags="$4"
+
+    logger -t molasses-watch "$title: $message"
+
+    if [[ -n "$NTFY_URL" ]]; then
+	curl \
+    	--silent \
+    	--show-error \
+    	--fail \
+    	--max-time 10 \
+    	-H "Authorization: Bearer $NTFY_TOKEN" \
+    	-H "Title: $title" \
+    	-H "Priority: $priority" \
+    	-H "Tags: $tags" \
+    	-d "$message" \
+    	"$NTFY_URL" >/dev/null || \
+    	logger -t molasses-watch "Failed to send ntfy notification"
+    fi
+}
+
+read_state()
+{
+    local file="$1"
+
+    if [[ -f "$file" ]]; then
+        cat "$file"
+    else
+        printf 'unknown'
+    fi
+}
+
+read_failures()
+{
+    local file="$1"
+
+    if [[ -f "$file" ]]; then
+        cat "$file"
+    else
+        printf '0'
+    fi
+}
+
+update_check()
+{
+    local name="$1"
+    local success="$2"
+    local state_file="$3"
+    local failure_file="$4"
+    local down_message="$5"
+    local up_message="$6"
+
+    local previous_state
+    local failures
+
+    previous_state="$(read_state "$state_file")"
+    failures="$(read_failures "$failure_file")"
+
+    if [[ "$success" == "true" ]]; then
+        printf '0\n' > "$failure_file"
+
+        if [[ "$previous_state" == "down" ]]; then
+            printf 'up\n' > "$state_file"
+            notify \
+                "$name recovered" \
+                "$up_message" \
+                "default" \
+                "white_check_mark"
+        elif [[ "$previous_state" == "unknown" ]]; then
+            printf 'up\n' > "$state_file"
+            logger -t molasses-watch "$name initial state: up"
+        fi
+
+        return
+    fi
+
+    failures=$((failures + 1))
+    printf '%s\n' "$failures" > "$failure_file"
+
+    if (( failures < FAILURE_THRESHOLD )); then
+        logger -t molasses-watch \
+            "$name failure $failures/$FAILURE_THRESHOLD"
+        return
+    fi
+
+    if [[ "$previous_state" != "down" ]]; then
+        printf 'down\n' > "$state_file"
+
+        notify \
+            "$name is DOWN" \
+            "$down_message" \
+            "high" \
+            "warning"
+    fi
+}
+
+#
+# Is Molasses itself reachable?
+#
+
+if ping -c 1 -W 2 "$HOST" >/dev/null 2>&1; then
+    host_ok=true
+else
+    host_ok=false
+fi
+
+update_check \
+    "Molasses" \
+    "$host_ok" \
+    "$HOST_STATE_FILE" \
+    "$HOST_FAILURE_FILE" \
+    "Clanker cannot reach Molasses ($HOST) over WireGuard." \
+    "Clanker can reach Molasses ($HOST) over WireGuard again."
+
+#
+# Is Uptime Kuma actually responding?
+#
+
+kuma_response="$(curl \
+    --silent \
+    --show-error \
+    --fail \
+    --max-time 5 \
+    "$KUMA_URL/api/entry-page" 2>/dev/null)" || kuma_response=""
+
+if [[ "$kuma_response" == *'"type"'* ]]; then
+    kuma_ok=true
+else
+    kuma_ok=false
+fi
+
+update_check \
+    "Uptime Kuma" \
+    "$kuma_ok" \
+    "$KUMA_STATE_FILE" \
+    "$KUMA_FAILURE_FILE" \
+    "Molasses is reachable, but Uptime Kuma is not responding correctly at $KUMA_URL." \
+    "Uptime Kuma is responding normally again at $KUMA_URL."

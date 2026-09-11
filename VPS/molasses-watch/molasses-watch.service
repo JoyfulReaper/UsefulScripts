@@ -1,0 +1,8 @@
+[Unit]
+Description=Check whether Molasses is reachable
+
+[Service]
+Type=oneshot
+StateDirectory=molasses-watch
+EnvironmentFile=-/etc/molasses-watch.env
+ExecStart=/usr/local/bin/molasses-watch

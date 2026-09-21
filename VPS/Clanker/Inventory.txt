@@ -1,0 +1,220 @@
+# Clanker Recovery Inventory
+
+## Host
+
+* Ubuntu 26.04.1 LTS / KVM
+* Root filesystem: 33 GB, ~64% used
+* Docker + systemd are the two primary service managers.
+
+## P0 — Secrets and machine identity
+
+These should exist in an encrypted backup outside Clanker.
+
+* `/etc/wireguard/`
+
+  * WireGuard private key and peer configuration
+* `/etc/yggdrasil/yggdrasil.conf`
+
+  * Yggdrasil identity/private key material
+* `/home/joyfulreaper/.ssh/`
+
+  * SSH keys
+  * DN42 registry signing key
+  * `authorized_keys`
+* `/opt/stacks/joyful-stack/.env`
+* `/opt/stacks/beszel/.env`
+* HappyGemini certificates under `/var/lib/happygemini/certs`
+* Cloudflared credentials/token — location still needs to be identified
+* Any application secrets referenced from Compose/environment files
+
+The inventory confirms WireGuard and Yggdrasil configs are host-managed.
+
+## P1 — Irreplaceable application state
+
+### Bind-mounted application data
+
+Back up:
+
+* `/var/lib/happygopher/`
+
+  * content
+  * data
+  * plugins
+* `/var/lib/happygopher-mystery/`
+* `/var/lib/happygemini/`
+
+  * certs
+  * content
+  * content-pipes
+  * plugins
+* `/var/lib/randomsteam/`
+
+  * application data
+  * ASP.NET Data Protection keys
+* `/var/lib/randomgithub/data`
+* `/var/lib/happyqotd/data`
+* `/var/lib/wsiwot`
+* `/opt/joyful-stack/data/happyfinger`
+* `/opt/joyful-stack/data/ntfy`
+* `/opt/joyful-stack/config/ntfy`
+* `/opt/smolsearch/data/smolsearch.db`
+* `/opt/stacks/beszel/beszel_data`
+* `/opt/stacks/beszel/beszel_agent_data`
+* `/opt/dockge/data`
+
+These are all currently mounted into running containers as persistent state.
+
+Known SQLite databases also include RandomSteam, RandomGitHub, WSIWOT, HappyQOTD, Mission Control Agent and tcpnoise.
+
+### Docker named volumes
+
+Definitely preserve:
+
+* `joyful-stack_archive-data`
+* `joyful-stack_dashboard-data`
+* `joyful-stack_gitactivity-data`
+* `joyful-stack_nats-data`
+* `dozzle_dozzle_data`
+
+Also investigate the anonymous volume currently mounted by Archive:
+
+* `62e6b93a5096d3e2b62afbbcdd03d9b8a3e2f8e6ac2a4a525bf85c77373caac9`
+
+  * mounted at `/app/data`
+
+Four additional anonymous Docker volumes exist and need to be classified before pruning anything.
+
+## P2 — Rebuild configuration
+
+### Docker Compose
+
+Six Compose projects currently define the container estate:
+
+* `joyful-stack` — 18 services
+* `beszel` — 2
+* `dockge`
+* `dozzle`
+* `it-tools`
+* `smolsearch`
+
+Compose files should be backed up even when the application source exists in Git because this host contains deployment-specific configuration.
+
+### Host networking and routing
+
+Preserve:
+
+* `/etc/bird/bird.conf`
+* `/etc/bird/peers/`
+* `/etc/systemd/system/dn42-dummy.service`
+* `/etc/wireguard/`
+* `/etc/yggdrasil/`
+* Docker `/etc/docker/daemon.json`
+* relevant sysctl configuration
+* UFW rules
+* nginx configuration
+
+Clanker currently has WireGuard, Yggdrasil and the new DN42 prefixes active simultaneously.
+
+### nginx
+
+Custom sites include:
+
+* `git-ygg`
+* `kgivler-api-ygg`
+* `kgivler-ygg`
+* `steam-ygg`
+
+Back up `/etc/nginx`, especially `sites-available` and corresponding enabled links.
+
+### systemd
+
+Important custom units include:
+
+* `dn42-dummy.service`
+* `missioncontrol-agent.service`
+* `vpn-landing.service`
+* `ygglanding.service`
+* `cloudflared.service`
+* `molasses-watch.service`
+* `molasses-watch.timer`
+* `cloudflared-update.service`
+* `cloudflared-update.timer`
+
+There are also old-looking unit files for HappyEcho, HappyFinger, HappyGopher and RandomSteam that should be classified as either legacy or still required.
+
+## P3 — Useful operational history
+
+Worth retaining if storage permits:
+
+* Mission Control data
+* GitActivity data
+* Dashboard data
+* NATS JetStream state
+* Beszel history
+* Dozzle state
+* ntfy data
+
+Losing these probably wouldn't prevent a rebuild, but it would destroy history.
+
+## Re-creatable — do not waste backup space
+
+Generally do not back up:
+
+* Docker images
+* container writable layers
+* Docker bridge networks
+* BuildKit caches
+* apt caches
+* logs unless deliberately desired
+* system package databases
+* `/var/lib/docker` wholesale
+
+Docker containers and networks should be recreated from Compose rather than restored as opaque Docker internals.
+
+## Service inventory
+
+### Docker-hosted applications
+
+The current Docker estate includes HappyGopher, HappyGemini, HappyQOTD, HappyDaytime, HappyFinger, HappyDiscard, HappyEcho, Mission Control gateway/dashboard/archive/GitActivity, RandomSteam, RandomGitHub, WSIWOT, NATS, ntfy, Beszel, Dockge, Dozzle, IT Tools and SmolSearch.
+
+### Host-managed services
+
+Notable running host services include:
+
+* BIRD
+* Cloudflared
+* Docker/containerd
+* Mission Control Agent
+* nginx
+* SSH
+* WireGuard via `wg-quick`
+* Yggdrasil
+* VPN landing page
+* Yggdrasil landing page
+
+### Scheduled work
+
+* `molasses-watch.timer` runs every minute.
+* Certbot, package maintenance, trim/scrub and other OS timers are active.
+* Root cron runs a Docker builder prune every Sunday at 04:00.
+
+## Inventory gap: tcpnoise
+
+`tcpnoise` is actively listening on numerous public ports including 21, 23, 420, 2222, 2323, 3389, 5432, 8080 and 42069, but it does not appear in either the running systemd-service list or the Docker container inventory.
+
+Its startup mechanism therefore needs to be identified and documented.
+
+## Restore order
+
+1. Provision Ubuntu host.
+2. Restore SSH access and host identity/secrets.
+3. Install Docker, WireGuard, Yggdrasil, nginx, Cloudflared and BIRD.
+4. Restore `/etc` configuration and custom systemd units.
+5. Restore Compose files and `.env` files.
+6. Restore bind-mounted persistent data.
+7. Restore Docker named-volume contents.
+8. Start infrastructure services.
+9. Start Compose projects.
+10. Verify WireGuard/Yggdrasil/DN42 routes.
+11. Verify public and VPN-only listeners.
+12. Test databases and application health.

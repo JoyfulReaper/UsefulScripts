@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ygg Address Browser</title>
+
+  <style>
+    body {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #111;
+      color: #ddd;
+      font-family: monospace;
+    }
+
+    textarea {
+      width: 100%;
+      height: 300px;
+      box-sizing: border-box;
+      background: #181818;
+      color: #9effa1;
+      border: 1px solid #444;
+      padding: 0.75rem;
+      font-family: monospace;
+    }
+
+    button {
+      margin: 0.5rem 0.25rem 0 0;
+      padding: 0.6rem 1rem;
+      background: #222;
+      color: #ddd;
+      border: 1px solid #555;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #333;
+    }
+
+    #status {
+      margin-top: 1rem;
+    }
+
+    #current {
+      color: #8fd3ff;
+      word-break: break-all;
+    }
+
+    .muted {
+      color: #888;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Ygg Address Browser</h1>
+
+  <p class="muted">
+    Paste one URL per line. The viewer reuses a separate browser window so
+    sites that refuse to run inside iframes still work.
+  </p>
+
+  <textarea id="urls" placeholder="http://[205:91d:6324:e5ec:f00f:a591:8e38:fe9d]
+http://[204:ef5a:316a:f281:7ed0:c71b:ef84:dea]
+http://[204:d7f2:5a9a:f4c9:69e0:66d:8978:7407]"></textarea>
+
+  <div>
+    <button id="load">Load List</button>
+    <button id="previous">Previous</button>
+    <button id="next">Next</button>
+    <button id="reload">Reload Current</button>
+  </div>
+
+  <div id="status">
+    <div id="counter">No list loaded.</div>
+    <div id="current"></div>
+  </div>
+
+  <script>
+    let addresses = [];
+    let index = -1;
+    let viewer = null;
+
+    const textarea = document.getElementById("urls");
+    const counter = document.getElementById("counter");
+    const current = document.getElementById("current");
+
+    function parseAddresses() {
+      return textarea.value
+        .split(/\r?\n/)
+        .map(x => x.trim())
+        .filter(x => x.length > 0)
+        .filter(x => !x.startsWith("#"));
+    }
+
+    function updateStatus() {
+      if (index < 0 || addresses.length === 0) {
+        counter.textContent = "No list loaded.";
+        current.textContent = "";
+        return;
+      }
+
+      counter.textContent = `${index + 1} / ${addresses.length}`;
+      current.textContent = addresses[index];
+    }
+
+    function showCurrent() {
+      if (index < 0 || index >= addresses.length)
+        return;
+
+      const url = addresses[index];
+
+      // Reuse one separate window instead of spawning hundreds of tabs.
+      if (!viewer || viewer.closed) {
+        viewer = window.open(url, "ygg-address-viewer");
+      } else {
+        viewer.location.href = url;
+        viewer.focus();
+      }
+
+      updateStatus();
+    }
+
+    document.getElementById("load").addEventListener("click", () => {
+      addresses = parseAddresses();
+
+      if (addresses.length === 0) {
+        index = -1;
+        updateStatus();
+        return;
+      }
+
+      index = 0;
+      showCurrent();
+    });
+
+    document.getElementById("next").addEventListener("click", () => {
+      if (addresses.length === 0)
+        return;
+
+      index++;
+
+      if (index >= addresses.length)
+        index = 0;
+
+      showCurrent();
+    });
+
+    document.getElementById("previous").addEventListener("click", () => {
+      if (addresses.length === 0)
+        return;
+
+      index--;
+
+      if (index < 0)
+        index = addresses.length - 1;
+
+      showCurrent();
+    });
+
+    document.getElementById("reload").addEventListener("click", () => {
+      showCurrent();
+    });
+
+    document.addEventListener("keydown", event => {
+      if (event.target === textarea)
+        return;
+
+      if (event.key === "ArrowRight") {
+        document.getElementById("next").click();
+      }
+
+      if (event.key === "ArrowLeft") {
+        document.getElementById("previous").click();
+      }
+    });
+  </script>
+</body>
+</html>

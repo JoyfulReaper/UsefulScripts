@@ -42,6 +42,16 @@ Storage:
     Free at inventory time: ~12 GB
     Filesystem: ext4
 
+    Disk-usage note:
+        Approximately 14 GB is currently occupied by /var/lib/containerd.
+
+        The majority is regeneratable Docker/BuildKit state:
+            ~12 GB containerd overlayfs snapshots
+            ~2.3 GB containerd content blobs
+            ~11.06 GB Docker build cache reported by docker system df -v
+
+        This state should not be included in normal Clanker backups.
+
 Boot:
     /boot      ~989 MB ext4
     /boot/efi  ~105 MB vfat
@@ -50,12 +60,8 @@ Primary service managers:
     - systemd
     - Docker Compose
 
-Primary administrator account observed:
+Primary administrator account:
     joyfulreaper
-
-NOTE:
-    A complete local-user/group inventory has NOT yet been captured.
-    See "Inventory Gaps / Commands To Run" below.
 
 ===============================================================================
 2. IMPORTANT NETWORK IDENTITIES
@@ -157,7 +163,18 @@ Important routing-related config observed:
     /etc/sysctl.conf
 
 Firewall:
-    UFW present and enabled.
+    UFW enabled.
+
+    Default policy:
+        incoming: deny
+        outgoing: allow
+        routed: deny
+
+    Publicly allowed services include the old RFC services, Gemini, WireGuard,
+    Yggdrasil, and the intentionally exposed TCPNoise listener ports.
+
+    SSH is firewall-restricted to the WireGuard address ranges rather than being
+    generally exposed to the public Internet.
 
 Important UFW files:
     /etc/ufw/ufw.conf
@@ -172,9 +189,8 @@ Important UFW files:
 Other firewall-related file:
     /etc/nftables.conf
 
-NOTE:
-    Actual effective UFW/nftables rules were NOT captured in the inventory.
-    See inventory-gap commands.
+The effective UFW and nftables rules were captured privately on 2026-09-21.
+They are intentionally not reproduced in this public dossier.
 
 ===============================================================================
 4. DOCKER
@@ -184,6 +200,14 @@ Docker is enabled and running.
 
 Docker daemon config:
     /etc/docker/daemon.json
+
+Build/cache state:
+    docker system df -v reported ~11.06 GB of build cache.
+    containerd uses ~14 GB total, dominated by overlayfs snapshots (~12 GB) and
+    content blobs (~2.3 GB).
+
+    This is regeneratable build/image state and is excluded from backup-critical
+    data.
 
 Current default address-pool strategy:
     Docker was moved away from DN42 address space.
@@ -429,6 +453,9 @@ Custom/local systemd units observed under /etc/systemd/system:
     randomsteam.service
     vpn-landing.service
     ygglanding.service
+
+Health:
+    No failed systemd units were reported on 2026-09-21.
 
 NOTE:
     happyecho.service, happyfinger.service, happygopher.service, and
@@ -805,6 +832,13 @@ Must exist outside Clanker and preferably encrypted.
     Cloudflared tunnel token
     Compose .env files
     HappyGemini certificate/private-key material
+
+    Secret-bearing service environment files:
+        /etc/missioncontrol-agent.env
+        /etc/molasses-watch.env
+        /etc/randomsteam/randomsteam.env
+        /etc/ygglanding.env
+
     other API keys / application secrets
 
 P1 - Irreplaceable or user-created state
@@ -851,13 +885,15 @@ Do not spend significant backup space on:
 
     Docker images
     container writable layers
-    Docker build cache
+    Docker/BuildKit build cache
+    containerd overlayfs snapshots/content blobs
     apt cache
     normal system package files
     /tmp
     transient logs
     Docker bridge/network state
     /var/lib/docker wholesale
+    /var/lib/containerd wholesale
 
 ===============================================================================
 19. BACKUP ARCHITECTURE UNDER CONSIDERATION
@@ -896,39 +932,56 @@ Design first.
 20. USERS / GROUPS / OWNERSHIP -- NOT YET INVENTORIED
 ===============================================================================
 
-Known human/admin user:
+Interactive/admin account:
     joyfulreaper
 
-Likely service accounts exist for packages such as:
+Service accounts of particular interest:
+    happygopher
+    randomsteam
+    happyfinger
+    happyecho
+    missioncontrol-agent
     bird
-    docker-related services
-    cloudflared (depending on service unit)
-    nginx
-    systemd services
 
-BUT:
-    We have not captured a canonical list of:
-        - local users
-        - human login users
-        - service users
-        - local groups
-        - group memberships
-        - sudo privileges
-        - Docker-group members
-        - shell assignments
-        - UID/GID ownership assumptions for persistent data
+joyfulreaper group memberships of operational interest:
+    sudo
+    users
+    happystaff
+    docker
 
-This matters for rebuilds because restoring files with the wrong UID/GID can break
-containers or services even when file contents are correct.
+Privilege notes:
+    joyfulreaper has full sudo access.
 
-Commands to capture this are listed later.
+    Membership in the docker group effectively grants privileged Docker access and
+    should be treated as root-equivalent operational access.
+
+Restore ownership caveat:
+    Several Docker-created persistent directories use numeric UID/GID 1654:1654.
+
+    Backup and restore operations must preserve numeric ownership rather than
+    assuming all application data maps directly to named host users/groups.
+
+Examples observed:
+    /var/lib/happygopher/data
+    /var/lib/randomsteam/
+    /var/lib/randomgithub/data
+
+Other persistent paths use a mix of:
+    root:root
+    joyfulreaper:joyfulreaper
+    happygopher:happystaff
+    missioncontrol-agent:missioncontrol-agent
+
+A raw users/groups/ownership inventory was captured privately on 2026-09-21 and
+is intentionally not reproduced here.
 
 ===============================================================================
 21. PACKAGE / SOFTWARE INVENTORY -- NOT YET COMPLETE
 ===============================================================================
 
 Known important packages/software:
-    Docker
+    Docker CE
+    Docker Buildx / Compose plugin
     containerd
     BIRD 2.18
     WireGuard
@@ -940,17 +993,31 @@ Known important packages/software:
     UFW
     certbot
     Git
-    SQLite tooling likely present
-    .NET workloads are primarily inside containers
+    SQLite tooling
+    ASP.NET Core Runtime 10
+    build-essential
+    CMake
+    Go toolchain
+    sysstat
 
-Not yet captured:
-    - complete manually installed apt package list
-    - apt repositories
-    - snap package list
-    - package versions
-    - manually installed standalone binaries
-    - custom binaries under /usr/local/bin
-    - locally compiled tools outside source trees
+APT sources of particular interest:
+    Ubuntu resolute / updates / backports / security
+    Docker official Ubuntu repository
+    Cloudflare cloudflared repository
+    Yggdrasil repository
+
+Snaps:
+    none listed at inventory time.
+
+Custom/local binary observed:
+    /usr/local/bin/molasses-watch
+
+A full manually-installed APT package list and repository inventory was captured
+privately on 2026-09-21.
+
+Still useful to capture later if needed:
+    - exact versions for all manually installed packages
+    - locally compiled tools outside known source trees
 
 ===============================================================================
 22. DNS / HOSTNAME / RESOLVER -- PARTIAL
@@ -960,161 +1027,93 @@ Observed:
     systemd-resolved running
     systemd-networkd running
 
-Files observed:
+Files/configuration of interest:
     /etc/resolv.conf
+    /etc/hosts
     /etc/systemd/resolved.conf
     /etc/systemd/networkd.conf
     /etc/systemd/networkd.conf.d/50-cloudimg-settings.conf
+    /etc/netplan/
 
-Not yet captured:
-    - effective DNS servers/search domains
-    - /etc/hosts
-    - hostname aliases
-    - cloud-init network source
-    - full netplan configuration
+Resolver, hosts and netplan state were captured privately on 2026-09-21.
+
+The public dossier intentionally records the architecture rather than dumping the
+full resolver/network configuration.
 
 ===============================================================================
 23. SECURITY / ACCESS -- PARTIAL
 ===============================================================================
 
-Observed:
-    SSH
-    UFW
+SSH:
+    root login disabled
+    password authentication disabled
+    keyboard-interactive authentication disabled
+    public-key authentication enabled
+
+Firewall:
+    UFW enabled
+    default incoming policy: deny
+    default outgoing policy: allow
+    default routed policy: deny
+
+    SSH is allowed from the WireGuard address ranges rather than generally from
+    the public Internet.
+
+Other security/access components:
     unattended upgrades
     AppArmor
-    public services on low-numbered protocol ports
-    public TCPNoise bait/listener ports
     WireGuard
     Cloudflare Tunnel
+    Yggdrasil overlay networking
 
-Not yet captured:
-    - effective UFW rules
-    - nftables ruleset
-    - SSH effective config
-    - fail2ban (if any)
-    - sudoers customizations
-    - file capabilities
-    - Docker socket access memberships
-    - root login policy
-    - password-authentication policy
-    - listening-process ownership beyond current socket snapshot
+Public exposure:
+    old RFC protocol services are intentionally public
+    Gemini is intentionally public
+    TCPNoise intentionally exposes several bait/listener ports
+
+Secret-bearing files that must never be committed:
+    /etc/missioncontrol-agent.env
+    /etc/molasses-watch.env
+    /etc/randomsteam/randomsteam.env
+    /etc/ygglanding.env
+    Compose .env files
+    WireGuard private-key material
+    Yggdrasil private-key material
+    SSH private keys
+    HappyGemini private keys/cert material as applicable
+
+Cloudflared:
+    Tunnel token currently lives directly in cloudflared.service.
+
+Captured privately but intentionally omitted from this public dossier:
+    full UFW rules
+    nftables ruleset
+    full effective sshd configuration
 
 ===============================================================================
 24. INVENTORY GAPS / COMMANDS TO RUN LATER
 ===============================================================================
 
-USERS AND GROUPS
-----------------
+The major host inventory passes are now complete.
 
-Local users:
-    getent passwd
+Captured privately on 2026-09-21:
+    users / groups / sudo / docker membership
+    manually installed package list
+    APT repositories
+    UFW rules
+    nftables ruleset
+    effective sshd configuration
+    netplan / hosts / resolver state
+    block devices / fstab / filesystem UUIDs
+    enabled sockets
+    custom systemd unit contents
+    persistent-path ownership
+    top-level disk usage
 
-Human-ish users (UID >= 1000):
-    awk -F: '$3 >= 1000 && $1 != "nobody" {print}' /etc/passwd
-
-Groups:
-    getent group
-
-joyfulreaper memberships:
-    id joyfulreaper
-
-sudo access:
-    sudo -l -U joyfulreaper
-
-Members of important groups:
-    getent group sudo
-    getent group docker
-
-LOGIN/SHELL STATUS:
-    sudo awk -F: '{printf "%-25s uid=%-6s gid=%-6s home=%-30s shell=%s\n",$1,$3,$4,$6,$7}' /etc/passwd
-
-PACKAGES
---------
-
-Manually installed apt packages:
-    apt-mark showmanual
-
-All installed packages:
-    dpkg-query -W -f='${binary:Package}\t${Version}\n'
-
-APT repositories:
-    grep -RhvE '^\s*(#|$)' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null
-
-Snaps:
-    snap list
-
-Standalone/local binaries:
-    sudo find /usr/local/bin /usr/local/sbin -maxdepth 1 -type f -ls
-
-NETWORK
--------
-
-Netplan:
-    sudo find /etc/netplan -maxdepth 2 -type f -print -exec sed -n '1,220p' {} \;
-
-Hosts:
-    cat /etc/hosts
-
-Resolver:
-    resolvectl status
-
-Effective UFW rules:
-    sudo ufw status verbose
-    sudo ufw status numbered
-
-nftables:
-    sudo nft list ruleset
-
-SSH:
-    sudo sshd -T
-
-SYSTEMD
--------
-
-Custom units with content:
-    for f in /etc/systemd/system/*.service /etc/systemd/system/*.timer; do
-        [ -f "$f" ] || continue
-        echo "===== $f ====="
-        sudo cat "$f"
-    done
-
-Failed units:
-    systemctl --failed
-
-Enabled sockets:
-    systemctl list-unit-files --type=socket --state=enabled
-
-FILESYSTEM / OWNERSHIP
-----------------------
-
-Persistent path ownership:
-    sudo find \
-      /var/lib/happygopher \
-      /var/lib/happygemini \
-      /var/lib/happyqotd \
-      /var/lib/randomsteam \
-      /var/lib/randomgithub \
-      /var/lib/wsiwot \
-      /opt/joyful-stack/data \
-      /opt/stacks/beszel \
-      /opt/dockge/data \
-      /opt/smolsearch/data \
-      -maxdepth 1 -printf '%u:%g %m %p\n'
-
-Large files/directories:
-    sudo du -xhd1 / /opt /var/lib 2>/dev/null | sort -h
-
-DISKS / BLOCK DEVICES
----------------------
-
-    lsblk -f
-    sudo blkid
-    cat /etc/fstab
+Still worth capturing or deciding:
 
 CLOUD / VPS
 -----------
-
-Capture manually:
     provider
     plan/spec
     region
@@ -1122,8 +1121,24 @@ Capture manually:
     public IPv6 allocation
     reverse DNS
     rescue-console procedure
-    snapshot capability
+    provider snapshot capability
     provider credentials location (NOT in this file)
+
+SERVICE CLEANUP
+---------------
+    classify old host-managed Happy*/RandomSteam systemd units
+    identify exact Cloudflare Tunnel(s) represented by cloudflared.service
+    review Let's Encrypt/certificate inventory
+    decide whether TCPNoise remains intentionally manual
+
+BACKUP DESIGN
+-------------
+    record ScopeCreep in the same general format
+    finalize backup repository topology
+    decide R2/restic strategy
+    define retention policy
+    write restore-test procedure
+    only then automate backups
 
 ===============================================================================
 25. RESTORE ORDER
@@ -1241,21 +1256,26 @@ Docker
 27. NEXT INVENTORY ACTIONS
 ===============================================================================
 
-Before declaring this dossier complete:
+Before declaring the dossier and recovery plan complete:
 
-[ ] Capture users/groups/sudo memberships
-[ ] Capture manual package list and apt sources
-[ ] Capture actual UFW/nftables rules
-[ ] Capture effective sshd config
-[ ] Capture /etc/netplan and /etc/hosts
-[ ] Capture filesystem/block-device/fstab details
+[x] Capture users/groups/sudo memberships
+[x] Capture manual package list and apt sources
+[x] Capture actual UFW/nftables rules privately
+[x] Capture effective sshd config privately
+[x] Capture /etc/netplan, /etc/hosts and resolver state privately
+[x] Capture filesystem/block-device/fstab details
+[x] Capture persistent-path ownership
+[x] Capture high-level disk usage
+[x] Confirm systemd health (0 failed units at snapshot time)
+
 [ ] Classify old systemd units
 [ ] Identify exact Cloudflare Tunnel(s) represented by cloudflared.service
-[ ] Review Let's Encrypt/cert inventory
+[ ] Review Let's Encrypt/certificate inventory
 [ ] Decide whether TCPNoise remains manual
 [ ] Record ScopeCreep in the same format
 [ ] Design backup repository topology
 [ ] Decide R2/restic strategy
+[ ] Define retention policy
 [ ] Write restore test procedure
 [ ] Only then automate backups
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Maintain Clanker restic backup repository
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clanker-backup-maintenance
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+TimeoutStartSec=0

@@ -11,6 +11,9 @@ readonly PEER_ENV="/etc/vps-backup/peer.env"
 readonly PEER_PASSWORD_FILE="/etc/vps-backup/peer-repository-password"
 readonly PEER_REPOSITORY="rest:http://10.99.0.1:8000/scopecreep/"
 
+readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
+readonly NTFY_URL="http://10.99.0.1:5197/vps-backups"
+
 START_EPOCH="$(date +%s)"
 CURRENT_STAGE="startup"
 
@@ -24,11 +27,39 @@ log()
 duration()
 {
     local seconds
+
     seconds=$(( $(date +%s) - START_EPOCH ))
 
     printf '%dm %02ds' \
         "$(( seconds / 60 ))" \
         "$(( seconds % 60 ))"
+}
+
+
+notify()
+{
+    local title="$1"
+    local priority="$2"
+    local message="$3"
+
+    if [[ -z "${NTFY_TOKEN:-}" ]]; then
+        log "WARNING: ntfy token unavailable; notification skipped."
+        return 0
+    fi
+
+    if ! curl \
+        --fail \
+        --silent \
+        --show-error \
+        -H "Authorization: Bearer $NTFY_TOKEN" \
+        -H "Title: $title" \
+        -H "Priority: $priority" \
+        -d "$message" \
+        "$NTFY_URL" \
+        >/dev/null
+    then
+        log "WARNING: ntfy notification failed."
+    fi
 }
 
 
@@ -42,8 +73,24 @@ die()
 cleanup()
 {
     local exit_code=$?
+    local message
 
     trap - EXIT
+
+    if [[ "$exit_code" -ne 0 ]]; then
+        message="$(
+            printf \
+                'Host: ScopeCreep\nStage: %s\nExit code: %s\nRuntime: %s' \
+                "$CURRENT_STAGE" \
+                "$exit_code" \
+                "$(duration)"
+        )"
+
+        notify \
+            "ScopeCreep backup FAILED" \
+            "high" \
+            "$message"
+    fi
 
     rm -rf "$STAGING" 2>/dev/null || true
 
@@ -99,6 +146,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 
+#
+# Preconditions
+#
+
 [[ "$EUID" -eq 0 ]] ||
     die "This script must run as root."
 
@@ -108,6 +159,7 @@ for command in \
     sqlite3 \
     rsync \
     flock \
+    curl \
     ip \
     ss \
     systemctl \
@@ -124,6 +176,13 @@ done
 [[ -f "$PEER_PASSWORD_FILE" ]] ||
     die "Missing $PEER_PASSWORD_FILE"
 
+[[ -f "$NTFY_ENV" ]] ||
+    die "Missing $NTFY_ENV"
+
+
+#
+# Prevent overlapping backups
+#
 
 exec 9>/run/lock/vps-backup.lock
 
@@ -132,10 +191,17 @@ if ! flock -n 9; then
 fi
 
 
+#
+# Credentials
+#
+
 set -a
 
 # shellcheck disable=SC1091
 source "$PEER_ENV"
+
+# shellcheck disable=SC1091
+source "$NTFY_ENV"
 
 set +a
 
@@ -147,11 +213,21 @@ export RESTIC_REPOSITORY="$PEER_REPOSITORY"
 log "Starting ScopeCreep backup."
 
 
+#
+# Verify peer repository
+#
+
 CURRENT_STAGE="peer repository connectivity"
+
+log "Checking peer repository connectivity."
 
 restic cat config >/dev/null ||
     die "Unable to access peer repository."
 
+
+#
+# Fresh staging tree
+#
 
 CURRENT_STAGE="staging initialization"
 
@@ -163,6 +239,10 @@ mkdir -p \
 
 chmod 700 "$STAGING"
 
+
+#
+# /etc
+#
 
 CURRENT_STAGE="staging /etc"
 
@@ -178,17 +258,28 @@ rsync_safe \
     "$ROOT_STAGE/etc/"
 
 
+#
+# Application/configuration state
+#
+
 FILESYSTEM_PATHS=(
     /home/joyfulreaper/.ssh
     /opt/stacks
     /opt/dockge
     /opt/beszel-agent
     /var/lib/beszel-agent
+
+    #
+    # Preserve rest-server authentication metadata,
+    # but NOT the Clanker repository beneath /var/lib/restic.
+    #
     /var/lib/restic/.htpasswd
 )
 
 
 CURRENT_STAGE="staging application data"
+
+log "Staging application and deployment data."
 
 for source in "${FILESYSTEM_PATHS[@]}"; do
     if [[ -e "$source" || -L "$source" ]]; then
@@ -205,12 +296,20 @@ for source in "${FILESYSTEM_PATHS[@]}"; do
 done
 
 
+#
+# Dockge SQLite database
+#
+
 CURRENT_STAGE="SQLite snapshot"
 
 snapshot_sqlite \
     /opt/dockge/data/dockge.db \
     "$ROOT_STAGE/opt/dockge/data/dockge.db"
 
+
+#
+# Recovery manifest
+#
 
 CURRENT_STAGE="recovery manifest"
 
@@ -256,6 +355,12 @@ docker ps -a \
 docker compose ls \
     > "$MANIFEST_STAGE/docker-compose.txt" 2>&1 || true
 
+docker volume ls \
+    > "$MANIFEST_STAGE/docker-volumes.txt"
+
+docker network ls \
+    > "$MANIFEST_STAGE/docker-networks.txt"
+
 systemctl list-unit-files \
     --state=enabled \
     > "$MANIFEST_STAGE/enabled-systemd-units.txt"
@@ -268,6 +373,16 @@ dpkg-query \
     -f='${binary:Package}\t${Version}\n' \
     > "$MANIFEST_STAGE/packages.txt"
 
+crontab -l \
+    > "$MANIFEST_STAGE/root-crontab.txt" 2>&1 || true
+
+crontab -u joyfulreaper -l \
+    > "$MANIFEST_STAGE/joyfulreaper-crontab.txt" 2>&1 || true
+
+
+#
+# Backup to Clanker
+#
 
 CURRENT_STAGE="restic peer backup"
 
@@ -283,6 +398,10 @@ log "Sending snapshot to Clanker."
 )
 
 
+#
+# Success
+#
+
 CURRENT_STAGE="complete"
 
 log "ScopeCreep backup completed successfully in $(duration)."
@@ -290,3 +409,15 @@ log "ScopeCreep backup completed successfully in $(duration)."
 restic snapshots \
     --host scopecreep \
     --latest 3 || true
+
+
+SUCCESS_MESSAGE="$(
+    printf \
+        'Host: ScopeCreep\nDestination: Clanker\nRuntime: %s\nStatus: backup completed successfully' \
+        "$(duration)"
+)"
+
+notify \
+    "ScopeCreep backup succeeded" \
+    "default" \
+    "$SUCCESS_MESSAGE"

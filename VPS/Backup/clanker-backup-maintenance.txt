@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+umask 077
+
+readonly REPOSITORY="/var/lib/restic/clanker"
+readonly PASSWORD_FILE="/etc/vps-backup/clanker-repository-password"
+
+log()
+{
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+[[ "$EUID" -eq 0 ]] || {
+    echo "Must run as root."
+    exit 1
+}
+
+before="$(du -sh "$REPOSITORY" | awk '{print $1}')"
+
+log "Repository size before maintenance: $before"
+
+#
+# Clear only stale locks.
+#
+log "Checking for stale repository locks."
+
+restic \
+    -r "$REPOSITORY" \
+    --password-file "$PASSWORD_FILE" \
+    unlock
+
+#
+# Keep every snapshot from the most recent 30-day window.
+#
+log "Applying 30-day retention policy."
+
+restic \
+    -r "$REPOSITORY" \
+    --password-file "$PASSWORD_FILE" \
+    forget \
+    --keep-within 30d \
+    --prune
+
+#
+# Weekly integrity check.
+#
+log "Checking repository integrity."
+
+restic \
+    -r "$REPOSITORY" \
+    --password-file "$PASSWORD_FILE" \
+    check
+
+after="$(du -sh "$REPOSITORY" | awk '{print $1}')"
+free="$(df -h / | awk 'NR==2 {print $4}')"
+used_pct="$(df -P / | awk 'NR==2 {print $5}')"
+
+log "Repository size after maintenance: $after"
+log "ScopeCreep root free space: $free ($used_pct used)"
+log "Maintenance completed successfully."

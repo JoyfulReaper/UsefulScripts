@@ -12,15 +12,59 @@ readonly PEER_ENV="/etc/vps-backup/peer.env"
 readonly PEER_PASSWORD_FILE="/etc/vps-backup/peer-repository-password"
 readonly PEER_REPOSITORY="rest:http://10.99.0.9:8000/clanker/"
 
+readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
+readonly NTFY_URL="http://127.0.0.1:5197/vps-backups"
+
 readonly NATS_CONTAINER="joyful-stack-nats-1"
 readonly NATS_VOLUME="/var/lib/docker/volumes/joyful-stack_nats-data/_data"
 
 NATS_STOPPED=0
+CURRENT_STAGE="startup"
+START_EPOCH="$(date +%s)"
 
 
 log()
 {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+
+duration()
+{
+    local seconds
+
+    seconds=$(( $(date +%s) - START_EPOCH ))
+
+    printf '%dm %02ds' \
+        "$(( seconds / 60 ))" \
+        "$(( seconds % 60 ))"
+}
+
+
+notify()
+{
+    local title="$1"
+    local priority="$2"
+    local message="$3"
+
+    if [[ -z "${NTFY_TOKEN:-}" ]]; then
+        log "WARNING: ntfy token unavailable; notification skipped."
+        return 0
+    fi
+
+    if ! curl \
+        --fail \
+        --silent \
+        --show-error \
+        -H "Authorization: Bearer $NTFY_TOKEN" \
+        -H "Title: $title" \
+        -H "Priority: $priority" \
+        -d "$message" \
+        "$NTFY_URL" \
+        >/dev/null
+    then
+        log "WARNING: ntfy notification failed."
+    fi
 }
 
 
@@ -34,17 +78,31 @@ die()
 cleanup()
 {
     local exit_code=$?
+    local message
 
     trap - EXIT
 
     if [[ "$NATS_STOPPED" -eq 1 ]]; then
         log "NATS was left stopped; attempting recovery..."
+
         docker start "$NATS_CONTAINER" >/dev/null 2>&1 || true
     fi
 
-    #
-    # Staging contains secrets, so remove it even after failure.
-    #
+    if [[ "$exit_code" -ne 0 ]]; then
+        message="$(
+            printf \
+                'Host: Clanker\nStage: %s\nExit code: %s\nRuntime: %s' \
+                "$CURRENT_STAGE" \
+                "$exit_code" \
+                "$(duration)"
+        )"
+
+        notify \
+            "Clanker backup FAILED" \
+            "high" \
+            "$message"
+    fi
+
     rm -rf "$STAGING" 2>/dev/null || true
 
     exit "$exit_code"
@@ -57,11 +115,6 @@ rsync_safe()
 
     rsync "$@" || rc=$?
 
-    #
-    # Exit code 24 means a source file vanished while rsync
-    # was reading a live filesystem. This is harmless for
-    # caches/temp files.
-    #
     if [[ "$rc" -eq 24 ]]; then
         log "WARNING: rsync reported vanished source files."
         return 0
@@ -82,10 +135,6 @@ snapshot_sqlite()
 
     mkdir -p "$(dirname "$destination")"
 
-    #
-    # Remove any potentially inconsistent copy and sidecars
-    # created earlier by rsync.
-    #
     rm -f \
         "$destination" \
         "${destination}-wal" \
@@ -109,8 +158,9 @@ trap 'exit 143' TERM
 
 
 #
-# Preconditions.
+# Preconditions
 #
+
 [[ "$EUID" -eq 0 ]] ||
     die "This script must run as root."
 
@@ -121,6 +171,7 @@ for command in \
     docker \
     tar \
     flock \
+    curl \
     ip \
     ss \
     systemctl
@@ -135,10 +186,14 @@ done
 [[ -f "$PEER_PASSWORD_FILE" ]] ||
     die "Missing $PEER_PASSWORD_FILE"
 
+[[ -f "$NTFY_ENV" ]] ||
+    die "Missing $NTFY_ENV"
+
 
 #
-# Prevent overlapping backups.
+# Prevent overlapping runs
 #
+
 exec 9>/run/lock/vps-backup.lock
 
 if ! flock -n 9; then
@@ -147,12 +202,16 @@ fi
 
 
 #
-# Load peer repository credentials before doing any work.
+# Credentials
 #
+
 set -a
 
 # shellcheck disable=SC1091
 source "$PEER_ENV"
+
+# shellcheck disable=SC1091
+source "$NTFY_ENV"
 
 set +a
 
@@ -162,6 +221,13 @@ export RESTIC_REPOSITORY="$PEER_REPOSITORY"
 
 log "Starting Clanker backup."
 
+
+#
+# Verify repository before touching application state
+#
+
+CURRENT_STAGE="peer repository connectivity"
+
 log "Checking peer repository connectivity."
 
 restic cat config >/dev/null ||
@@ -169,8 +235,11 @@ restic cat config >/dev/null ||
 
 
 #
-# Fresh staging area.
+# Fresh staging tree
 #
+
+CURRENT_STAGE="staging initialization"
+
 rm -rf "$STAGING"
 
 mkdir -p \
@@ -184,9 +253,9 @@ chmod 700 "$STAGING"
 #
 # /etc
 #
-# Preserve essentially all host configuration, but deliberately
-# exclude the backup repository credentials themselves.
-#
+
+CURRENT_STAGE="staging /etc"
+
 log "Staging /etc."
 
 mkdir -p "$ROOT_STAGE/etc"
@@ -200,8 +269,9 @@ rsync_safe \
 
 
 #
-# Other filesystem trees worth preserving directly.
+# Filesystem/application state
 #
+
 FILESYSTEM_PATHS=(
     /home/joyfulreaper/.ssh
 
@@ -218,12 +288,10 @@ FILESYSTEM_PATHS=(
     /opt/dockge
     /opt/smolsearch
 
-    #
-    # Preserve the symlink itself as well.
-    #
     /opt/joyful-stack
 )
 
+CURRENT_STAGE="staging application data"
 
 log "Staging application and deployment data."
 
@@ -243,8 +311,9 @@ done
 
 
 #
-# SQLite databases stored in ordinary filesystem/bind mounts.
+# Filesystem SQLite databases
 #
+
 SQLITE_DATABASES=(
     /opt/dockge/data/dockge.db
     /opt/smolsearch/data/smolsearch.db
@@ -271,6 +340,7 @@ SQLITE_DATABASES=(
     /var/lib/wsiwot/WhatShouldIWorkOnToday.db
 )
 
+CURRENT_STAGE="SQLite snapshots"
 
 log "Creating consistent SQLite snapshots."
 
@@ -282,8 +352,11 @@ done
 
 
 #
-# SQLite databases stored inside Docker named volumes.
+# Docker-volume SQLite
 #
+
+CURRENT_STAGE="Docker volume SQLite snapshots"
+
 log "Snapshotting SQLite databases from Docker named volumes."
 
 snapshot_sqlite \
@@ -300,9 +373,12 @@ snapshot_sqlite \
 
 
 #
-# ASP.NET Data Protection keys from the dashboard named volume.
+# Dashboard Data Protection keys
 #
-DASHBOARD_KEYS="/var/lib/docker/volumes/joyful-stack_dashboard-data/_data/data-protection"
+
+CURRENT_STAGE="dashboard Data Protection keys"
+
+readonly DASHBOARD_KEYS="/var/lib/docker/volumes/joyful-stack_dashboard-data/_data/data-protection"
 
 if [[ -d "$DASHBOARD_KEYS" ]]; then
     log "Staging dashboard Data Protection keys."
@@ -321,12 +397,11 @@ fi
 
 
 #
-# NATS JetStream.
+# NATS JetStream
 #
-# This is the one volume we snapshot at the filesystem level.
-# Stop NATS only for the local tar operation, then immediately
-# bring it back before restic begins uploading.
-#
+
+CURRENT_STAGE="NATS JetStream snapshot"
+
 log "Snapshotting NATS JetStream."
 
 [[ -d "$NATS_VOLUME" ]] ||
@@ -341,12 +416,10 @@ if [[ "$(docker inspect -f '{{.State.Running}}' "$NATS_CONTAINER")" == "true" ]]
     log "Stopping NATS."
 
     docker stop --time 30 "$NATS_CONTAINER" >/dev/null
-
     NATS_STOPPED=1
 else
     log "NATS was already stopped."
 fi
-
 
 tar \
     --numeric-owner \
@@ -356,12 +429,10 @@ tar \
     -cpf "$VOLUME_STAGE/joyful-stack_nats-data/nats.tar" \
     .
 
-
 if [[ "$NATS_STOPPED" -eq 1 ]]; then
     log "Restarting NATS."
 
     docker start "$NATS_CONTAINER" >/dev/null
-
     NATS_STOPPED=0
 
     [[ "$(docker inspect -f '{{.State.Running}}' "$NATS_CONTAINER")" == "true" ]] ||
@@ -370,10 +441,12 @@ fi
 
 
 #
-# Recovery manifest.
+# Recovery manifest
 #
-log "Generating recovery manifest."
 
+CURRENT_STAGE="recovery manifest"
+
+log "Generating recovery manifest."
 
 {
     echo "Backup generated:"
@@ -389,82 +462,63 @@ log "Generating recovery manifest."
     cat /etc/os-release
 } > "$MANIFEST_STAGE/host.txt"
 
-
 df -hT \
     > "$MANIFEST_STAGE/filesystems.txt"
-
 
 lsblk -f \
     > "$MANIFEST_STAGE/block-devices.txt"
 
-
 ip -brief address \
     > "$MANIFEST_STAGE/ip-addresses.txt"
-
 
 ip route \
     > "$MANIFEST_STAGE/routes-ipv4.txt"
 
-
 ip -6 route \
     > "$MANIFEST_STAGE/routes-ipv6.txt"
 
-
 wg show \
     > "$MANIFEST_STAGE/wireguard.txt" 2>&1 || true
-
 
 docker ps -a \
     --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' \
     > "$MANIFEST_STAGE/docker-containers.txt"
 
-
 docker compose ls \
     > "$MANIFEST_STAGE/docker-compose.txt" 2>&1 || true
-
 
 docker volume ls \
     > "$MANIFEST_STAGE/docker-volumes.txt"
 
-
 docker network ls \
     > "$MANIFEST_STAGE/docker-networks.txt"
-
 
 systemctl list-unit-files \
     --state=enabled \
     > "$MANIFEST_STAGE/enabled-systemd-units.txt"
 
-
 ss -lntup \
     > "$MANIFEST_STAGE/listening-sockets.txt" 2>&1 || true
-
 
 dpkg-query \
     -W \
     -f='${binary:Package}\t${Version}\n' \
     > "$MANIFEST_STAGE/packages.txt"
 
-
 crontab -l \
     > "$MANIFEST_STAGE/root-crontab.txt" 2>&1 || true
-
 
 crontab -u joyfulreaper -l \
     > "$MANIFEST_STAGE/joyfulreaper-crontab.txt" 2>&1 || true
 
 
 #
-# Send one coherent snapshot.
+# Backup
 #
-# Because we cd into staging first, the snapshot root is:
-#
-#   root/
-#   docker-volumes/
-#   manifest/
-#
-log "Sending snapshot to ScopeCreep."
 
+CURRENT_STAGE="restic peer backup"
+
+log "Sending snapshot to ScopeCreep."
 
 (
     cd "$STAGING"
@@ -477,16 +531,41 @@ log "Sending snapshot to ScopeCreep."
 
 
 #
-# Full check for now while we're validating the backup system.
-# We can make this less frequent once the setup is proven.
+# Repository verification
 #
-log "Checking repository."
+# Sunday = ISO weekday 7.
+#
 
-restic check
+if [[ "$(date +%u)" == "7" ]]; then
+    CURRENT_STAGE="weekly repository check"
 
+    log "Running weekly repository check."
+
+    restic check
+else
+    log "Skipping full repository check; scheduled for Sunday."
+fi
+
+
+#
+# Success
+#
+
+CURRENT_STAGE="complete"
 
 log "Backup completed successfully."
 
 restic snapshots \
     --host clanker \
-    --latest 3
+    --latest 3 || true
+
+SUCCESS_MESSAGE="$(
+    printf \
+        'Host: Clanker\nDestination: ScopeCreep\nRuntime: %s\nStatus: backup completed successfully' \
+        "$(duration)"
+)"
+
+notify \
+    "Clanker backup succeeded" \
+    "default" \
+    "$SUCCESS_MESSAGE"

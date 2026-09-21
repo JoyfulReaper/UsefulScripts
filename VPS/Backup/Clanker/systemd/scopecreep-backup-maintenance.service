@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain ScopeCreep restic backup repository
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/scopecreep-backup-maintenance
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=0

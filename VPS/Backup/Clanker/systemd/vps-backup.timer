@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Clanker VPS backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

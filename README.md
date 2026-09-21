@@ -1,93 +1,131 @@
 # Useful Scripts
 
-Useful Scripts contains small administration helpers and the Docker Compose
-configuration used for the services on the JoyfulReaper VPS. It is deployment
-configuration, not a source-of-truth repository for the applications it runs.
-Most files here are either host-side utilities or build contexts staged for the
-VPS deployment pipeline.
+A collection of deployment configuration, administration helpers, monitoring
+scripts, and small utilities used across JoyfulReaper systems.
+
+This repository is not the source repository for the applications it deploys.
+Application source lives in its respective project repositories.
 
 ## Repository layout
 
-| Path | Purpose |
-| --- | --- |
-| `VPS/docker-compose.yaml` | Production-oriented Compose model for the VPS service stack. |
-| `VPS/<application>/` | Dockerfiles, NuGet configuration, and build-context support files staged for individual applications. |
-| `VPS/<application>/local-nuget/` | Offline or pinned NuGet packages copied into the container build context. |
-| `VPS/Beszel/compose.yaml` | Separate Beszel deployment configuration. |
-| `bash/memory.sh` | Linux host, systemd service, container, memory, and disk usage snapshot. |
-| `powershell/iis_error_search.ps1` | Searches application logs and parsed IIS W3C logs for recent errors. |
-| `powershell/Clean-DotNetBuildArtifacts.ps1` | Removes `bin` and `obj` directories under a chosen root to reclaim build space. |
-| `kvirc/ntfy_alert.txt` | IRC notification hook that posts channel activity to ntfy when the local client is unfocused. |
+```text
+UsefulScripts/
+├── VPS/
+│   ├── compose.yml
+│   ├── .env.example
+│   ├── Backup/
+│   │   ├── Clanker/
+│   │   └── ScopeCreep/
+│   ├── Beszel/
+│   ├── Clanker/
+│   ├── HappyDaytime/
+│   ├── HappyEcho/
+│   ├── HappyFinger/
+│   ├── HappyGopher/
+│   ├── HappyQOTD/
+│   ├── MissionControl/
+│   ├── RandomSteamGame/
+│   └── molasses-watch/
+├── bash/
+├── kvirc/
+├── LLMs/
+├── powershell/
+└── ssh_config.txt
+```
 
-Application source and deployment-only files may be supplied to the VPS build
-contexts separately. Confirm each referenced Dockerfile and source tree is
-present before building.
+## VPS deployment
 
-## What this repo is for
+`VPS/compose.yml` is the version-controlled Compose model for the main VPS
+service stack.
 
-- Deploying and maintaining the JoyfulReaper VPS service stack
-- Running quick health and diagnostics scripts on Linux and Windows hosts
-- Keeping small support files, such as IRC alert hooks and pinned NuGet
-  packages, close to the deployment configuration they support
+The live deployment tree on Clanker is:
 
-## VPS stack
+```text
+/opt/stacks/joyful-stack
+```
 
-`VPS/docker-compose.yaml` defines these services:
+The deployed copy of `compose.yml` is kept in sync with the repository version.
 
-- RabbitMQ, MissionControl Gateway, Archive, GitActivity, and Dashboard
-- HappyQOTD, HappyDaytime, HappyEcho, HappyFinger, and HappyGopher
+Application source and other build contexts are staged into the live deployment
+tree before Docker builds occur. As a result, not every Compose build context
+is expected to exist inside this repository.
+
+For example, the live deployment may contain directories such as:
+
+```text
+HappyDiscard/
+HappyGemini/
+Random_Github/
+WhatShouldIWorkOnToday/
+```
+
+even though those application source trees are not tracked here.
+
+This repository therefore contains the deployment model and supporting build
+files, while `/opt/stacks/joyful-stack` is the actual assembled build and
+deployment workspace.
+
+## Main Compose stack
+
+The main stack currently includes services such as:
+
+- NATS with JetStream
+- Mission Control Gateway
+- Mission Control Archive
+- GitActivity
+- Mission Control Dashboard
+- HappyQOTD
+- HappyDaytime
+- HappyEcho
+- HappyDiscard
+- HappyFinger
+- HappyGopher
+- HappyGemini
 - RandomSteamGame
+- RandomGitHub
+- WhatShouldIWorkOnToday
 - ntfy
 
-Services on the `backend` network communicate by Compose service name. Several
-host ports bind only to `127.0.0.1`; any public routing or TLS termination is
-managed outside this repository. Some protocol services intentionally use host
-networking or bind their protocol ports directly.
+Some services use the Compose `backend` network, while protocol servers or
+special-purpose services may use host networking or explicit host port
+bindings.
 
-Persistent named volumes hold RabbitMQ, Archive, GitActivity, and Dashboard
-state. Additional bind mounts under `/var/lib` hold application-specific data.
-Back up persistent application data before destructive deployment changes.
+Several administrative and internal endpoints bind only to localhost or the
+WireGuard interface.
 
 ## Configuration
 
-Run Compose from the `VPS` directory. The checked-in `VPS/.env` is an empty
-variable-name template. Supply real values through a deployment-local copy, the
-shell environment, or the deployment secret store, and never commit populated
-credentials.
-
-The main Compose model references these variables:
+The checked-in environment template is:
 
 ```text
-DASHBOARD_MOBILE_API_TOKEN_HASH
-GITACTIVITY_API_KEY
-GITHUB_WEBHOOK_SECRET
-HAPPYDAYTIME_MISSION_CONTROL_KEY
-HAPPYECHO_MISSION_CONTROL_KEY
-HAPPYFINGER_MISSION_CONTROL_KEY
-HAPPYGOPHER_MISSION_CONTROL_KEY
-HAPPYQOTD_ADMIN_API_KEY
-HAPPYQOTD_MISSION_CONTROL_KEY
-KGIVLER_API_MISSION_CONTROL_KEY
-MISSIONCONTROL_AGENT_MISSION_CONTROL_KEY
-MISSIONCONTROL_DASHBOARD_MISSION_CONTROL_KEY
-RABBITMQ_PASSWORD
-RABBITMQ_USER
-RANDOMSTEAM_COMMIT_SHA
-RANDOMSTEAM_IMAGE_TAG
-RANDOMSTEAM_MISSION_CONTROL_KEY
-RANDOMSTEAM_STEAM_API_KEY
+VPS/.env.example
 ```
 
-The Dashboard reaches GitActivity through the private Compose network at
-`http://gitactivity:8080/` and reuses `GITACTIVITY_API_KEY` server-side. Mobile
-clients authenticate to the Dashboard Mobile API with their existing bearer
-token; they never receive the GitActivity key. An independently configured,
-API-key-protected public GitActivity route may remain available to other trusted
-server-side consumers.
+Supply real values through a deployment-local environment file, the shell
+environment, or another secret store. Do not commit populated credentials.
 
-## Validate and deploy
+The Compose stack references environment variables for application API keys,
+Mission Control credentials, authentication, GitHub integration, deployment
+image tags, and other runtime secrets.
 
-From `VPS`:
+Validate the configuration from the assembled deployment tree with:
+
+```bash
+docker compose config --quiet
+```
+
+Avoid sharing unrestricted `docker compose config` output because interpolated
+environment values may contain secrets.
+
+## Deploying
+
+The live deployment directory on Clanker is:
+
+```bash
+cd /opt/stacks/joyful-stack
+```
+
+Typical commands:
 
 ```bash
 docker compose config --quiet
@@ -96,62 +134,141 @@ docker compose up -d
 docker compose ps
 ```
 
-Inspect a service without dumping the resolved Compose configuration, which may
-contain secrets:
+Individual service logs can be inspected with:
 
 ```bash
-docker compose logs --tail=100 dashboard
-docker compose logs --tail=100 gitactivity
+docker compose logs --tail=100 SERVICE
 ```
 
-Avoid sharing the output of `docker compose config` without `--quiet`; Compose
-interpolates environment values into that output.
+## Backups
 
-## Utility scripts
+Backup tooling is stored under:
 
-On the Linux host, run the resource summary from the repository root:
-
-```bash
-bash bash/memory.sh
+```text
+VPS/Backup/
 ```
 
-The script samples overall CPU usage, selected systemd services, Docker
-containers, system memory, and the primary disk. Adjust its `services` array and
-disk path when the host layout changes.
+The directory is organized by the host the scripts run on.
 
-Run the IIS/application error search from PowerShell:
+### Clanker
 
-```powershell
-.\powershell\iis_error_search.ps1
-.\powershell\iis_error_search.ps1 -NewestFilesOnly -NewestFileCount 5 -Last 50
+```text
+VPS/Backup/Clanker/
+├── backup.sh
+├── scopecreep-repo-maintenance.sh
+└── systemd/
 ```
 
-Use `-AppLogPaths`, `-IisLogPaths`, `-AppPatterns`, and `-IisStatusCodes` to
-override the defaults.
+Clanker performs a daily restic backup to a repository hosted on ScopeCreep
+over WireGuard.
 
-Run the .NET build artifact cleanup helper from PowerShell:
+The client uses append-only repository access.
 
-```powershell
-.\powershell\Clean-DotNetBuildArtifacts.ps1 -Root C:\GitHub -WhatIf
-.\powershell\Clean-DotNetBuildArtifacts.ps1 -Root C:\GitHub
+Clanker also performs trusted weekly maintenance for the ScopeCreep repository
+stored locally on Clanker.
+
+Maintenance includes:
+
+- stale lock cleanup
+- 30-day snapshot retention
+- pruning
+- repository integrity checking
+- ntfy success/failure notifications
+
+### ScopeCreep
+
+```text
+VPS/Backup/ScopeCreep/
+├── backup.sh
+├── clanker-repo-maintenance.sh
+└── systemd/
 ```
 
-Use `-WhatIf` first to preview the directories that would be removed.
+ScopeCreep performs a daily restic backup to a repository hosted on Clanker
+over WireGuard.
 
-The `kvirc/ntfy_alert.txt` snippet is a client-side hook for IRC notifications.
-It only sends alerts for the configured channels, skips notifications when the
-window is focused, and posts the message text to the ntfy endpoint.
+ScopeCreep also performs trusted weekly maintenance for the Clanker repository
+stored locally on ScopeCreep.
+
+The two systems therefore provide reciprocal peer backups while repository
+maintenance remains under the control of the machine physically storing each
+repository.
+
+Backup credentials and repository passwords live outside Git under:
+
+```text
+/etc/vps-backup/
+```
+
+Do not commit them.
+
+## Molasses monitoring
+
+`VPS/molasses-watch/` contains a small systemd-driven monitor that checks:
+
+- WireGuard reachability to Molasses
+- Uptime Kuma availability
+- recovery after an outage
+
+It can send state-change notifications through ntfy.
+
+Runtime credentials belong in an external environment file such as:
+
+```text
+/etc/molasses-watch.env
+```
+
+The checked-in `.env.example` is only a template.
+
+## Other utilities
+
+### Linux
+
+`bash/memory.sh` prints a quick host resource summary including:
+
+- CPU usage
+- selected systemd service state
+- service memory usage
+- Docker container usage
+- system memory
+- disk usage
+
+### PowerShell
+
+The `powershell/` directory contains Windows administration and diagnostic
+helpers, including scripts for:
+
+- IIS/application error searching
+- cleaning .NET build artifacts
+- monitoring GreenCloud bandwidth
+- testing protocol services
+- viewing network traffic
+
+### KVirc
+
+`kvirc/ntfy_alert.txt` contains an IRC-to-ntfy notification hook.
+
+Do not commit a real ntfy token into this file.
+
+### SSH
+
+`ssh_config.txt` contains convenient SSH host aliases for systems reachable
+through the private network and jump hosts.
+
+It contains topology information and should not contain private keys or
+passwords.
 
 ## Security notes
 
-- Keep `.env`, API keys, bearer tokens, signing material, and database files out
-  of source control.
-- Keep RabbitMQ and application databases on private networks and persistent
-  storage.
-- Treat reverse-proxy and tunnel configuration as part of the security boundary.
-- Rotate a compromised credential in both its producer and consumer
-  configuration.
-- Review image tags and configuration diffs before every deployment.
+- Never commit populated `.env` files.
+- Never commit API keys, access tokens, repository passwords, certificates,
+  private keys, or database files.
+- Keep backup credentials under `/etc/vps-backup/` with restrictive
+  permissions.
+- Treat WireGuard addressing, SSH aliases, hostnames, and service topology as
+  operational information even when they are not secrets.
+- Review Compose changes before deploying them.
+- Back up persistent state before destructive deployment changes.
 
 ## License
 

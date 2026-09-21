@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
+umask 077
 
 readonly STAGING="/var/lib/vps-backup/staging"
 readonly ROOT_STAGE="$STAGING/root"
@@ -94,24 +95,7 @@ chmod 700 "$STAGING"
 # Files/directories to preserve directly.
 #
 FILESYSTEM_PATHS=(
-    /etc/wireguard
-    /etc/yggdrasil
-    /etc/bird
-    /etc/nginx
-    /etc/ufw
-    /etc/systemd/system
-    /etc/sysctl.d
-    /etc/netplan
-    /etc/ssh
-    /etc/docker/daemon.json
-    /etc/letsencrypt
-    /etc/cloudflared
-
-    /etc/happyecho
-    /etc/missioncontrol-agent.env
-    /etc/molasses-watch.env
-    /etc/randomsteam
-    /etc/ygglanding.env
+    /etc
 
     /home/joyfulreaper/.ssh
 

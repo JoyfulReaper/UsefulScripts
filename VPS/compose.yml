@@ -502,6 +502,9 @@ services:
       EventSources__Sources__14__Name: ygglanding-production
       EventSources__Sources__14__ApiKey: ${YGGLANDING_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__15__Name: missioncontrol-agent-scopecreep
+      EventSources__Sources__15__ApiKey: ${SCOPECREEP_AGENT_MISSION_CONTROL_KEY}
+
     depends_on:
       - nats
 
@@ -1048,7 +1051,7 @@ services:
       - /var/lib/happygopher/data:/app/data
 
     ports:
-      - "[201:762f:80bd:20e1:20db:1239:19af:f25e]:70:70"
+      - "[301:762f:80bd:20e1::60]:70:70"
 
     networks:
       - backend

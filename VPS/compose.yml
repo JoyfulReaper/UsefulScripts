@@ -685,6 +685,12 @@ services:
       GreenCloud__ApiToken: ${GREEN_CLOUD_TOKEN}
       GreenCloud__PollSeconds: 300
 
+      GreenCloud__Servers__0__NodeId: clanker
+      GreenCloud__Servers__0__ServerId: b1accaf4-4263-4ec5-ae3b-d29cc880d98d
+
+      GreenCloud__Servers__1__NodeId: scopecreep
+      GreenCloud__Servers__1__ServerId: 73a024ef-d2d1-431f-b699-7ca7838c1bc5
+
       Dashboard__Authentication__DatabaseFileName: dashboard-auth.db
       Dashboard__Authentication__BasePath: /app/data
       Dashboard__Authentication__DataProtectionKeysPath: /app/data/data-protection

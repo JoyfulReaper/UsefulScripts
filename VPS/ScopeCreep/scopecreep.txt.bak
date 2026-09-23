@@ -259,6 +259,7 @@ dockge:
 
 Important running services observed:
 
+    beszel-agent.service
     cloudflared.service
     containerd.service
     docker.service
@@ -267,21 +268,14 @@ Important running services observed:
     systemd-timesyncd.service
     cron.service
 
-Legacy Beszel host deployment:
-    The older host-managed Beszel agent was disabled on 2026-09-22 after
-    confirming that the Docker Compose agent remained active on TCP/45876 and
-    continued accepting connections from the Beszel hub on Clanker.
+Potential duplicate Beszel deployment:
+    A Docker beszel-agent container is running while beszel-agent.service is
+    also active on the host.
 
-    Disabled units:
-        beszel-agent.service
-        beszel-agent-update.timer
-
-    Legacy files/state still present:
-        /opt/beszel-agent
-        /var/lib/beszel-agent
-
-    These may be removed after the Docker deployment has remained healthy for
-    a reasonable period.
+    This may be intentional, but should be reviewed and classified as:
+        - intentional dual deployment
+        - obsolete host service
+        - obsolete Docker deployment
 
 Custom/local systemd units observed:
 
@@ -339,10 +333,7 @@ Other observed timers include:
     fstrim
     e2scrub_all
     systemd-tmpfiles-clean
-
-Disabled legacy timer:
-    beszel-agent-update.timer
-        Disabled 2026-09-22 with the old host-managed Beszel deployment.
+    beszel-agent-update
 
 ===============================================================================
 9. USEFULSCRIPTS DEPLOYMENT
@@ -408,12 +399,6 @@ Application/configuration paths explicitly included:
     /opt/beszel-agent
     /var/lib/beszel-agent
     /var/lib/restic/.htpasswd
-
-NOTE:
-    /opt/beszel-agent and /var/lib/beszel-agent belong to the now-disabled
-    legacy host-managed Beszel deployment. They remain in the current backup
-    script as of this inventory and can be removed from backup scope once the
-    old deployment is intentionally deleted.
 
 IMPORTANT:
     The Clanker restic repository beneath /var/lib/restic is intentionally NOT
@@ -526,12 +511,8 @@ P1 / important persistent application state:
     /opt/stacks/beszel-agent/beszel_agent_data
         Beszel agent data.
 
-Legacy / no longer backup-critical:
-    /opt/beszel-agent
     /var/lib/beszel-agent
-
-        These belong to the disabled host-managed Beszel deployment and may be
-        removed after confirming the Docker agent remains healthy.
+        Host Beszel state, if the host service remains intentional.
 
 P2 / useful but reproducible:
     /home/joyfulreaper/UsefulScripts
@@ -584,38 +565,21 @@ this public file.
 18. BESZEL
 ===============================================================================
 
-Canonical deployment:
-    Docker Compose
+Two Beszel agent deployments appear to exist:
 
-Compose config:
-    /opt/stacks/beszel-agent/compose.yaml
+1. Docker:
+       beszel-agent container
+       data:
+           /opt/stacks/beszel-agent/beszel_agent_data
 
-Container:
-    beszel-agent
+2. Host service:
+       beszel-agent.service
+       state:
+           /var/lib/beszel-agent
 
-Network mode:
-    host
-
-Listener:
-    TCP/45876
-
-Persistent data:
-    /opt/stacks/beszel-agent/beszel_agent_data
-
-Verification performed 2026-09-22:
-    - Docker beszel-agent remained running after disabling the host service.
-    - Docker agent continued listening on TCP/45876.
-    - Docker logs showed successful SSH connections from 10.99.0.1 (Clanker).
-
-Legacy host deployment:
-    /opt/beszel-agent
-    /var/lib/beszel-agent
-    beszel-agent.service
-    beszel-agent-update.service
-    beszel-agent-update.timer
-
-    beszel-agent.service and beszel-agent-update.timer were disabled on
-    2026-09-22.
+This should be reviewed before restore documentation is considered final.
+If one deployment is obsolete, remove it rather than preserving duplicate state
+forever.
 
 ===============================================================================
 19. BACKUP PRIORITY MODEL
@@ -664,7 +628,7 @@ Suggested high-level rebuild order:
 9. Restore Dockge database/state.
 10. Recreate/start Docker Compose projects.
 11. Restore/validate cloudflared if still required.
-12. Verify the Docker Compose Beszel agent is healthy and reachable from Clanker.
+12. Restore/validate Beszel deployment after deciding which copy is canonical.
 13. Enable backup and maintenance timers.
 14. Verify ScopeCreep can back itself up to Clanker.
 15. Verify Clanker's restic repository is readable on ScopeCreep.
@@ -725,39 +689,31 @@ Backup relationship:
 
 Still worth checking later:
 
-1. After the Docker Beszel agent has remained healthy, remove the disabled
-   legacy host deployment:
-       /opt/beszel-agent
-       /var/lib/beszel-agent
-       beszel-agent.service
-       beszel-agent-update.service
-       beszel-agent-update.timer
+1. Determine whether Docker beszel-agent or host beszel-agent.service is the
+   canonical deployment and remove the obsolete copy if appropriate.
 
-2. Remove /opt/beszel-agent and /var/lib/beszel-agent from ScopeCreep's backup
-   script after the legacy deployment is deleted.
+2. Inventory cloudflared configuration without exposing tunnel credentials.
 
-3. Inventory cloudflared configuration without exposing tunnel credentials.
-
-4. Identify the purpose/name of wg1 peers:
+3. Identify the purpose/name of wg1 peers:
        10.98.0.2
        10.98.0.3
        10.98.0.4
 
-5. Capture the effective listening socket inventory.
+4. Capture the effective listening socket inventory.
 
-6. Confirm whether any useful persistent data exists outside:
+5. Confirm whether any useful persistent data exists outside:
        /var/lib/restic
        /opt/stacks
        /opt/dockge
        Beszel paths
 
-7. Decide whether ScopeCreep will ever participate in DN42. If yes, move Docker
+6. Decide whether ScopeCreep will ever participate in DN42. If yes, move Docker
    networks away from 172.20.0.0/14 before configuring DN42 routes.
 
-8. Verify the first scheduled weekly Clanker repository maintenance run and its
+7. Verify the first scheduled weekly Clanker repository maintenance run and its
    integrity check.
 
-9. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
+8. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
 
 ===============================================================================
 23. SUMMARY
@@ -780,8 +736,7 @@ The biggest recovery concern is not disk volume; it is preserving the secret
 files under /etc/vps-backup out-of-band, because ScopeCreep intentionally
 excludes those credentials from its own peer backup.
 
-The main remaining cleanup items are:
-    - remove the disabled legacy Beszel deployment after a short soak period
-    - remove its obsolete paths from the ScopeCreep backup script
+The main cleanup items are:
+    - resolve the apparent duplicate Beszel deployment
     - document cloudflared safely
     - avoid DN42/Docker address overlap if DN42 is ever enabled here

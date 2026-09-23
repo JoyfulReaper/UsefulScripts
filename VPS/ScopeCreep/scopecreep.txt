@@ -1,7 +1,7 @@
 SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-22
+Snapshot date: 2026-09-23
 
 PURPOSE
 -------
@@ -134,6 +134,11 @@ Other publicly allowed TCP ports observed:
 
 Port 45876/tcp is allowed on wg0.
 
+Mission Control Agent API:
+    TCP/5194 is allowed on wg0 from 10.99.0.0/24.
+    The Agent listens on 10.99.0.9:5194 and is intended to be reachable only
+    across the primary WireGuard network.
+
 NOTE:
     Firewall allowance does not prove that a service is currently listening on
     each allowed port. This inventory did not capture the complete listening
@@ -262,10 +267,62 @@ Important running services observed:
     cloudflared.service
     containerd.service
     docker.service
+    missioncontrol-agent.service
     ssh.service
     qemu-guest-agent.service
     systemd-timesyncd.service
     cron.service
+
+Mission Control Agent:
+    Service:
+        missioncontrol-agent.service
+
+    Deployment:
+        systemd-managed host process
+        WorkingDirectory=/opt/missioncontrol-agent
+        ExecStart=/opt/missioncontrol-agent/MissionControl.Agent
+
+    Runtime API:
+        http://10.99.0.9:5194
+        /health/live
+        /api/snapshot
+
+    Identity:
+        NodeId: scopecreep
+        Display name: ScopeCreep
+
+    Docker access:
+        The service runs as missioncontrol-agent and receives the docker
+        supplementary group so it can collect container metrics.
+
+    Configuration:
+        Base application files live under /opt/missioncontrol-agent.
+        Runtime environment overrides live in:
+            /etc/missioncontrol-agent.env
+
+        The systemd unit loads that file through:
+            /etc/systemd/system/missioncontrol-agent.service.d/override.conf
+
+        The drop-in must contain:
+            [Service]
+            EnvironmentFile=/etc/missioncontrol-agent.env
+
+        This EnvironmentFile directive is required. On 2026-09-23 the env file
+        existed but the service did not load it, causing the Agent to fall back
+        to appsettings.json where Mission Control publishing was disabled.
+
+    Central publication:
+        Enabled through environment overrides.
+        Gateway: http://10.99.0.1:5190
+        ScopeCreep has its own Mission Control event-source API key.
+        The key is secret and must not be committed to this repository.
+
+        Successful publication to the central Gateway was verified on
+        2026-09-23; /api/snapshot reported:
+            missionControlPublishSucceeded: true
+
+    Firewall:
+        UFW allows TCP/5194 on wg0 only from 10.99.0.0/24.
 
 Legacy Beszel host deployment:
     The older host-managed Beszel agent was disabled on 2026-09-22 after
@@ -292,6 +349,9 @@ Custom/local systemd units observed:
     /etc/systemd/system/cloudflared.service
     /etc/systemd/system/cloudflared-update.service
     /etc/systemd/system/cloudflared-update.timer
+
+    /etc/systemd/system/missioncontrol-agent.service
+    /etc/systemd/system/missioncontrol-agent.service.d/override.conf
 
     /etc/systemd/system/vps-backup.service
     /etc/systemd/system/vps-backup.timer
@@ -408,6 +468,16 @@ Application/configuration paths explicitly included:
     /opt/beszel-agent
     /var/lib/beszel-agent
     /var/lib/restic/.htpasswd
+
+Mission Control recovery note:
+    /etc/missioncontrol-agent.env and the Mission Control systemd unit/drop-in
+    are covered by the general /etc staging unless excluded by a future backup
+    change. The env file is secret-bearing and must never be committed publicly.
+
+    /opt/missioncontrol-agent is NOT explicitly included in the current backup
+    list. It contains reproducible deployed binaries and should be republished
+    from the MissionControl repository during a rebuild unless backup policy is
+    intentionally expanded later.
 
 NOTE:
     /opt/beszel-agent and /var/lib/beszel-agent belong to the now-disabled
@@ -526,6 +596,10 @@ P1 / important persistent application state:
     /opt/stacks/beszel-agent/beszel_agent_data
         Beszel agent data.
 
+    /etc/missioncontrol-agent.env
+        Secret-bearing Mission Control Agent runtime configuration, including
+        the per-node publishing credential. Covered by the general /etc backup.
+
 Legacy / no longer backup-critical:
     /opt/beszel-agent
     /var/lib/beszel-agent
@@ -537,6 +611,10 @@ P2 / useful but reproducible:
     /home/joyfulreaper/UsefulScripts
         Operational source checkout.
         Re-clonable from GitHub but required for symlinked backup entry points.
+
+    /opt/missioncontrol-agent
+        Published Mission Control Agent binaries. Reproducible from the
+        MissionControl repository and not explicitly backed up today.
 
 Regeneratable / normally do not back up:
     /var/lib/docker
@@ -632,9 +710,11 @@ P1 - important persistent state:
     /opt/dockge/data
     /opt/stacks
     Beszel state if still used
+    /etc/missioncontrol-agent.env
 
 P2 - useful configuration / convenience:
     UsefulScripts checkout
+    Mission Control Agent published binaries
     package manifest
     systemd manifests
     recovery inventory
@@ -664,12 +744,17 @@ Suggested high-level rebuild order:
 9. Restore Dockge database/state.
 10. Recreate/start Docker Compose projects.
 11. Restore/validate cloudflared if still required.
-12. Verify the Docker Compose Beszel agent is healthy and reachable from Clanker.
-13. Enable backup and maintenance timers.
-14. Verify ScopeCreep can back itself up to Clanker.
-15. Verify Clanker's restic repository is readable on ScopeCreep.
-16. Run restic check against the Clanker repository.
-17. Verify ntfy backup notifications.
+12. Republish/deploy Mission Control Agent to /opt/missioncontrol-agent.
+13. Restore/verify missioncontrol-agent.service and its EnvironmentFile drop-in.
+14. Verify the Agent listens only on the intended WireGuard address/port.
+15. Verify /api/snapshot reports the stable NodeId `scopecreep` and successful
+    central Mission Control publication.
+16. Verify the Docker Compose Beszel agent is healthy and reachable from Clanker.
+17. Enable backup and maintenance timers.
+18. Verify ScopeCreep can back itself up to Clanker.
+19. Verify Clanker's restic repository is readable on ScopeCreep.
+20. Run restic check against the Clanker repository.
+21. Verify ntfy backup notifications.
 
 ===============================================================================
 21. CURRENT HIGH-LEVEL SERVICE MAP
@@ -688,6 +773,10 @@ ScopeCreep
    |     fd42:42:42::9
    |        |
    |        +-- homelab / Clanker WireGuard network
+   |        |
+   |        +-- Mission Control Agent API
+   |               10.99.0.9:5194
+   |               publishes -> Clanker 10.99.0.1:5190
    |
    +-- wg1
    |     10.98.0.1
@@ -759,6 +848,10 @@ Still worth checking later:
 
 9. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
 
+10. Decide whether /opt/missioncontrol-agent should remain reproducible-only or
+    be explicitly included in ScopeCreep's backup. The current systemd unit and
+    runtime environment configuration are already covered through /etc.
+
 ===============================================================================
 23. SUMMARY
 ===============================================================================
@@ -768,6 +861,7 @@ responsibilities:
 
     - peer backup storage for Clanker
     - self-backup to Clanker
+    - Mission Control Agent
     - Dockge
     - Dozzle agent
     - Beszel agent
@@ -775,6 +869,12 @@ responsibilities:
     - WireGuard connectivity
 
 Its critical state is small.
+
+Mission Control now treats ScopeCreep as its own stable node. The Agent is
+host-managed by systemd, exposes its API over the WireGuard network, collects
+host/Docker state, and successfully publishes into the central Gateway on
+Clanker. Its /etc/missioncontrol-agent.env file must actually be loaded by the
+systemd EnvironmentFile drop-in; having the file on disk alone is not enough.
 
 The biggest recovery concern is not disk volume; it is preserving the secret
 files under /etc/vps-backup out-of-band, because ScopeCreep intentionally
@@ -784,4 +884,5 @@ The main remaining cleanup items are:
     - remove the disabled legacy Beszel deployment after a short soak period
     - remove its obsolete paths from the ScopeCreep backup script
     - document cloudflared safely
+    - decide whether the reproducible Mission Control Agent binaries need backup
     - avoid DN42/Docker address overlap if DN42 is ever enabled here

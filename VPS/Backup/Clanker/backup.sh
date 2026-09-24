@@ -12,6 +12,9 @@ readonly PEER_ENV="/etc/vps-backup/peer.env"
 readonly PEER_PASSWORD_FILE="/etc/vps-backup/peer-repository-password"
 readonly PEER_REPOSITORY="rest:http://10.99.0.9:8000/clanker/"
 
+readonly B2_ENV="/etc/vps-backup/b2.env"
+readonly B2_REPOSITORY="s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-clanker"
+
 readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
 readonly NTFY_URL="http://127.0.0.1:5197/vps-backups"
 
@@ -186,6 +189,9 @@ done
 [[ -f "$PEER_PASSWORD_FILE" ]] ||
     die "Missing $PEER_PASSWORD_FILE"
 
+[[ -f "$B2_ENV" ]] ||
+    die "Missing $B2_ENV"
+
 [[ -f "$NTFY_ENV" ]] ||
     die "Missing $NTFY_ENV"
 
@@ -211,12 +217,13 @@ set -a
 source "$PEER_ENV"
 
 # shellcheck disable=SC1091
+source "$B2_ENV"
+
+# shellcheck disable=SC1091
 source "$NTFY_ENV"
 
 set +a
 
-export RESTIC_PASSWORD_FILE="$PEER_PASSWORD_FILE"
-export RESTIC_REPOSITORY="$PEER_REPOSITORY"
 
 
 log "Starting Clanker backup."
@@ -228,10 +235,30 @@ log "Starting Clanker backup."
 
 CURRENT_STAGE="peer repository connectivity"
 
-log "Checking peer repository connectivity."
+log "Checking ScopeCreep repository connectivity."
 
-restic cat config >/dev/null ||
-    die "Unable to access peer repository."
+restic \
+    -r "$PEER_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    cat config \
+    >/dev/null ||
+    die "Unable to access Clanker repository on ScopeCreep."
+
+
+#
+# Verify B2 repository
+#
+
+CURRENT_STAGE="B2 repository connectivity"
+
+log "Checking Backblaze B2 repository connectivity."
+
+restic \
+    -r "$B2_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    cat config \
+    >/dev/null ||
+    die "Unable to access Clanker repository on Backblaze B2."
 
 
 #
@@ -513,7 +540,7 @@ crontab -u joyfulreaper -l \
 
 
 #
-# Backup
+# Backup to ScopeCreep
 #
 
 CURRENT_STAGE="restic peer backup"
@@ -523,10 +550,35 @@ log "Sending snapshot to ScopeCreep."
 (
     cd "$STAGING"
 
-    restic backup . \
+    restic \
+        -r "$PEER_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        backup . \
         --host clanker \
         --tag clanker \
         --tag peer
+)
+
+
+#
+# Backup to Backblaze B2
+#
+
+CURRENT_STAGE="restic B2 backup"
+
+log "Sending snapshot to Backblaze B2."
+
+(
+    cd "$STAGING"
+
+    restic \
+        -r "$B2_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        backup . \
+        --host clanker \
+        --tag clanker \
+        --tag offsite \
+        --tag b2
 )
 
 
@@ -537,13 +589,25 @@ log "Sending snapshot to ScopeCreep."
 #
 
 if [[ "$(date +%u)" == "7" ]]; then
-    CURRENT_STAGE="weekly repository check"
+    CURRENT_STAGE="weekly peer repository check"
 
-    log "Running weekly repository check."
+    log "Running weekly ScopeCreep repository check."
 
-    restic check
+    restic \
+        -r "$PEER_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        check
+
+    CURRENT_STAGE="weekly B2 repository check"
+
+    log "Running weekly Backblaze B2 repository check."
+
+    restic \
+        -r "$B2_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        check
 else
-    log "Skipping full repository check; scheduled for Sunday."
+    log "Skipping full repository checks; scheduled for Sunday."
 fi
 
 
@@ -555,13 +619,27 @@ CURRENT_STAGE="complete"
 
 log "Backup completed successfully."
 
-restic snapshots \
+log "Recent ScopeCreep snapshots."
+
+restic \
+    -r "$PEER_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    snapshots \
+    --host clanker \
+    --latest 3 || true
+
+log "Recent Backblaze B2 snapshots."
+
+restic \
+    -r "$B2_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    snapshots \
     --host clanker \
     --latest 3 || true
 
 SUCCESS_MESSAGE="$(
     printf \
-        'Host: Clanker\nDestination: ScopeCreep\nRuntime: %s\nStatus: backup completed successfully' \
+        'Host: Clanker\nDestinations: ScopeCreep + Backblaze B2\nRuntime: %s\nStatus: both backups completed successfully' \
         "$(duration)"
 )"
 

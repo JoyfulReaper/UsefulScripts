@@ -127,13 +127,15 @@ WireGuard:
         /etc/wireguard
 
 Observed WireGuard routes:
-    10.99.0.0/24
-    fd42:42:42::/64
-    ::/0
+    10.99.0.0/24 via wg0
+    fd42:42:42::/64 via wg0
 
-IMPORTANT:
-    Molasses currently routes all IPv6 through the WireGuard peer. During a
-    rebuild, do not assume wg0 is only carrying the private WireGuard networks.
+Normal Internet IPv6:
+    Uses the native ISP IPv6 connection through wifi0.
+
+Molasses also retains a Clanker-routed public IPv6 /128 on wg0 from an older
+routing setup. Its continued need should be reviewed now that native ISP IPv6
+is available.
 
 IPv4 forwarding:
     enabled

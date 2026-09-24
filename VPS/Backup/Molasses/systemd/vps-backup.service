@@ -7,6 +7,8 @@ After=network-online.target docker.service
 Type=oneshot
 ExecStart=/usr/local/sbin/vps-backup
 
+Environment=HOME=/root
+
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

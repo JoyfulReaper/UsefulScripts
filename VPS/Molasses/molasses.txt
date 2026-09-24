@@ -1,13 +1,13 @@
 MOLASSES
 ========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-22
+Snapshot date: 2026-09-24
 
 PURPOSE
 -------
 Molasses is Kyle's always-on home Debian server. It currently acts as a local
-network utility host, DNS resolver/filter, Docker application host, observability
-agent, IRC/web utility host, and Matrix homeserver.
+network utility host, DNS resolver/filter, Docker application host, monitoring
+host, IRC/web utility host, and Matrix homeserver.
 
 This file is intended to answer:
 - What is Molasses?
@@ -16,13 +16,17 @@ This file is intended to answer:
 - Where is its configuration?
 - Where is persistent data?
 - Which secrets and identities are irreplaceable?
-- What network does it participate in?
-- What should be backed up?
-- What can be recreated?
-- What would be needed to rebuild it?
-- What have we NOT inventoried yet?
+- What should actually be backed up?
+- What is intentionally NOT backed up?
+- What would be needed to rebuild it after a drive failure?
 
 It is deliberately broader than a backup manifest.
+
+The backup policy is intentionally conservative. In particular, Matrix is NOT
+being treated as a full-state archival service. The goal for Matrix is to retain
+the absolute minimum required to rebuild the same homeserver identity and
+configuration after a disk failure, not to preserve the PostgreSQL database,
+room/event history, or media store.
 
 ===============================================================================
 1. HOST / HARDWARE
@@ -48,11 +52,6 @@ Firmware / BIOS:
     Version: A08
     Release date: 2015-06-29
 
-    Future work:
-        Verify A08 against Dell's latest available Inspiron 3847 BIOS.
-        Firmware flashing is intentionally deferred until the exact latest
-        release and update procedure are confirmed.
-
 Primary storage:
     Disk:
         /dev/sda
@@ -65,13 +64,16 @@ Primary storage:
         /dev/sda2  ~922.6 GiB ext4 /
         /dev/sda3  ~7.9 GiB swap
 
-    Root filesystem at inventory:
+    Root filesystem at 2026-09-24 inventory:
         Size: ~908 GiB
-        Used: ~9.0 GiB
-        Available: ~853 GiB
+        Used: ~13 GiB
+        Available: ~849 GiB
         Usage: ~2%
 
-SMART status observed before this snapshot:
+A second block device /dev/sdb was visible but had no filesystem or mount shown
+in the current inventory. Its intended role is not yet documented.
+
+Previously observed SMART status:
     Overall health: PASSED
     Reallocated sectors: 0
     Current pending sectors: 0
@@ -79,8 +81,8 @@ SMART status observed before this snapshot:
     UDMA CRC errors: 0
     Logged SMART errors: none
     Extended self-test: completed without error
-    Power-on hours: ~14,461
-    Temperature: ~37 C
+    Power-on hours at that snapshot: ~14,461
+    Temperature at that snapshot: ~37 C
 
 Storage policy:
     The HDD is currently healthy enough for service, but important live state
@@ -103,10 +105,9 @@ Primary LAN interface:
 LAN IPv4:
     192.168.1.5/24
 
-LAN IPv6 observed:
-    2600:4040:f02d:3200::5/64
-    2600:4040:f02d:3200:b4c6:4165:5ee7:c95e/64
-    link-local IPv6 also present
+LAN IPv6:
+    Global IPv6 is present on wifi0.
+    Exact residential/global IPv6 addresses are intentionally omitted here.
 
 Default IPv4 gateway:
     192.168.1.1 via wifi0
@@ -120,15 +121,25 @@ WireGuard:
     IPv4: 10.99.0.10/24
     IPv6:
         fd42:42:42::10/64
-        2607:f2d8:8416:10c1::10/128
+        an additional routed public /128 from Clanker's IPv6 prefix
 
     Configuration:
         /etc/wireguard
 
-Observed routes:
-    10.99.0.0/24 via wg0
-    192.168.1.0/24 via wifi0
-    Docker bridge routes in 172.17.0.0/16 through 172.24.0.0/16 ranges
+Observed WireGuard routes:
+    10.99.0.0/24
+    fd42:42:42::/64
+    ::/0
+
+IMPORTANT:
+    Molasses currently routes all IPv6 through the WireGuard peer. During a
+    rebuild, do not assume wg0 is only carrying the private WireGuard networks.
+
+IPv4 forwarding:
+    enabled
+
+IPv6 forwarding:
+    disabled
 
 ===============================================================================
 3. FIREWALL
@@ -145,7 +156,7 @@ Default policy:
 Logging:
     low
 
-Important allowed LAN services on wifi0:
+Important LAN-scoped services on wifi0:
     DNS:
         TCP/53
         UDP/53
@@ -159,7 +170,7 @@ Important allowed LAN services on wifi0:
     TCP/20211:
         LAN-only
 
-Important WireGuard-only or WireGuard-scoped services:
+Important WireGuard-scoped services:
     TCP/45876
         Beszel agent
     TCP/22
@@ -168,26 +179,25 @@ Important WireGuard-only or WireGuard-scoped services:
     DNS:
         TCP/53
         UDP/53
-        IPv4 source restricted to 10.99.0.0/24
-        IPv6 source restricted to fd42:42:42::/64
-
-IPv6 LAN rules mirror the local LAN service restrictions for the observed
-2600:4040:f02d:3200::/64 prefix.
+        restricted to the WireGuard ranges
 
 Important note:
     Docker-published ports should be treated separately from UFW assumptions.
     Docker's iptables/nftables integration can affect reachability independently
     of simple "ufw status" output.
 
-    PairDrop currently publishes TCP/3000 on 0.0.0.0 and [::]. Its actual
-    reachability from untrusted networks should be verified.
+PairDrop currently publishes TCP/3000 on IPv4 and IPv6 wildcard addresses. Its
+actual reachability from untrusted networks should be verified.
 
 ===============================================================================
 4. DOCKER
 ===============================================================================
 
-Docker version at inventory:
+Docker Engine at current inventory:
     29.8.1
+
+Docker Compose:
+    v5.5.1
 
 Docker and containerd:
     enabled and running
@@ -196,10 +206,16 @@ Docker runtime/cache:
     /var/lib/docker
     /var/lib/containerd
 
-These are mostly regeneratable container/image/runtime state and should NOT be
-treated as primary backup data.
+Current Docker disk use:
+    Images:      ~6.2 GB
+    Containers:  ~14 MB
+    Build cache: 0
+    Named volumes: one small The Lounge volume
 
-Observed Docker bridge address space:
+These runtime/image/cache trees are regeneratable and should NOT be treated as
+primary backup data.
+
+Observed Docker bridge address space includes:
     172.17.0.0/16
     172.18.0.0/16
     172.19.0.0/16
@@ -210,14 +226,12 @@ Observed Docker bridge address space:
     172.24.0.0/16
 
 IMPORTANT DN42 NOTE:
-    Docker currently occupies 172.20.0.0/16 and adjacent 172.2x/16 networks.
+    Docker currently occupies 172.20.0.0/16 and adjacent ranges inside DN42's
+    172.20.0.0/14 space.
 
-    DN42 uses 172.20.0.0/14.
-
-    Molasses is not currently being used as a DN42 router, so this is not an
-    active problem. If Molasses ever joins DN42, Docker's address pools must be
-    moved away from 172.20.0.0/14 first, similar to the cleanup performed on
-    Clanker.
+    Molasses is not currently acting as a DN42 router, so this is not an active
+    problem. If Molasses later joins DN42, move Docker's address pools away from
+    172.20.0.0/14 first, as was done on Clanker.
 
 ===============================================================================
 5. DOCKER COMPOSE PROJECTS
@@ -240,6 +254,8 @@ Current Compose projects:
 4. matrix
    Config:
        /opt/stacks/matrix/compose.yaml
+   Environment:
+       /opt/stacks/matrix/.env
 
 5. netalertx
    Config:
@@ -248,6 +264,8 @@ Current Compose projects:
 6. pairdrop
    Config:
        /opt/stacks/pairdrop/compose.yaml
+   Environment:
+       /opt/stacks/pairdrop/.env
 
 7. scrutiny
    Config:
@@ -277,101 +295,63 @@ Matrix / Synapse:
         postgres:16-alpine
 
     Synapse:
-        healthy at inventory
-        public service is reached through Cloudflare Tunnel
+        healthy at current inventory
         host binding:
             127.0.0.1:8008 -> container TCP/8008
 
     PostgreSQL:
-        healthy at inventory
-        TCP/5432 is container-internal only; not published on the host
+        healthy at current inventory
+        TCP/5432 is container-internal only
 
-    Persistent data:
+    Persistent paths:
         /opt/stacks/matrix/synapse
         /opt/stacks/matrix/postgres
 
-    Approximate sizes after initial setup and joining public rooms:
-        PostgreSQL directory: ~264 MB
-        Synapse directory:    ~43 MB
-        Matrix stack total:   ~307 MB
-
-    IMPORTANT:
-        The live PostgreSQL data directory is NOT a backup artifact.
-        Database backups should use pg_dump or another PostgreSQL-consistent
-        logical/physical backup mechanism.
-
 NetAlertX:
-    Image:
-        ghcr.io/netalertx/netalertx:latest
-    Status:
-        healthy at inventory
     Persistent data:
         /opt/stacks/netalertx/data -> /data
 
 PairDrop:
-    Image:
-        lscr.io/linuxserver/pairdrop:latest
     Published:
         TCP/3000 on IPv4 and IPv6 wildcard addresses
-    No persistent mount was observed during inventory.
+    No persistent container mount was observed.
 
 Uptime Kuma:
-    Image:
-        louislam/uptime-kuma:2
-    Status:
-        healthy at inventory
     Published:
         127.0.0.1:3001 -> container TCP/3001
     Persistent data:
         /opt/stacks/uptime-kuma/data -> /app/data
 
 Scrutiny:
-    Image:
-        ghcr.io/analogj/scrutiny:v0.9.3-omnibus
     Published:
         10.99.0.10:8082 -> container TCP/8080
     Persistent data:
         /opt/stacks/scrutiny/config
         /opt/stacks/scrutiny/influxdb
-    Other mount:
-        /run/udev
 
 The Lounge:
-    Image:
-        ghcr.io/thelounge/thelounge:latest
     Published:
         127.0.0.1:9000 -> container TCP/9000
     Persistent Docker named volume:
         loungedocker_thelounge-data
     Host path:
         /var/lib/docker/volumes/loungedocker_thelounge-data/_data
-    Size at inventory:
-        ~48 KB
 
 Beszel agent:
-    Image:
-        henrygd/beszel-agent:latest
     Listener:
         TCP/45876
     Persistent data:
         /opt/stacks/beszel-agent/beszel_agent_data
-            -> /var/lib/beszel-agent
     Other mount:
         /var/run/docker.sock
 
 Dozzle agent:
-    Image:
-        amir20/dozzle:latest
     Published:
         10.99.0.10:7007 -> container TCP/7007
     Mount:
         /var/run/docker.sock
 
 Dockge:
-    Image:
-        louislam/dockge:1
-    Status:
-        healthy at inventory
     Published:
         10.99.0.10:5001 -> container TCP/5001
     Persistent/configuration mounts:
@@ -385,7 +365,7 @@ Dockge:
 ===============================================================================
 
 Homeserver implementation:
-    Synapse 1.161.0 at setup verification time
+    Synapse
 
 Permanent Matrix server name:
     kgivler.com
@@ -401,45 +381,52 @@ Public ingress:
 
 Matrix discovery:
     https://kgivler.com/.well-known/matrix/client
-
-    Response points clients to:
-        https://matrix.kgivler.com
+        -> https://matrix.kgivler.com
 
 Federation discovery:
     https://kgivler.com/.well-known/matrix/server
+        -> matrix.kgivler.com:443
 
-    Response points federation to:
-        matrix.kgivler.com:443
+Previously verified:
+    - public client API
+    - public federation API
+    - .well-known client discovery
+    - .well-known federation discovery
+    - working federation with public remote rooms
 
-Verification completed:
-    - Public client API responded successfully.
-    - Public federation API responded successfully.
-    - .well-known client discovery returned HTTP 200 / application/json.
-    - .well-known federation discovery returned HTTP 200 / application/json.
-    - Both .well-known responses include Access-Control-Allow-Origin: *.
-    - A local administrative account was created.
-    - The homeserver successfully joined public remote rooms on matrix.org,
-      confirming working federation beyond a simple local API test.
+Current Matrix disk use:
+    /opt/stacks/matrix                 ~3.4 GB
+    /opt/stacks/matrix/postgres        ~2.8 GB
+    /opt/stacks/matrix/postgres/base   ~2.7 GB
+    /opt/stacks/matrix/synapse         ~601 MB
+    /opt/stacks/matrix/synapse/media_store
+                                       ~601 MB
 
-Important Matrix paths:
+Current PostgreSQL database size reported from inside the container:
+    synapse                            ~2699 MB
+
+Important Matrix files currently identified:
+
     /opt/stacks/matrix/compose.yaml
     /opt/stacks/matrix/.env
+
     /opt/stacks/matrix/synapse/homeserver.yaml
+    /opt/stacks/matrix/synapse/kgivler.com.log.config
     /opt/stacks/matrix/synapse/kgivler.com.signing.key
-    /opt/stacks/matrix/synapse/
-    /opt/stacks/matrix/postgres/
+    /opt/stacks/matrix/synapse/registration_shared_secret
 
-P0 identity:
+P0 Matrix identity:
     /opt/stacks/matrix/synapse/kgivler.com.signing.key
 
-    This signing key is irreplaceable homeserver identity material and must never
-    exist only on Molasses' HDD.
+    This is the server signing identity and must not exist only on Molasses'
+    mechanical disk.
 
-Secrets:
+Other secret-bearing Matrix material:
     /opt/stacks/matrix/.env
-    homeserver/database credentials
+    /opt/stacks/matrix/synapse/registration_shared_secret
+    secrets referenced by homeserver.yaml
 
-    Do not commit these to a public repository.
+    Do not commit their contents to this public repository.
 
 Registration:
     closed
@@ -450,7 +437,67 @@ Current design:
     initial deployment.
 
 ===============================================================================
-8. HOST-MANAGED SYSTEMD SERVICES
+8. MATRIX MINIMAL DISASTER-RECOVERY POLICY
+===============================================================================
+
+Matrix is intentionally NOT receiving a full backup.
+
+The recovery goal is:
+
+    "After the Molasses drive dies, rebuild a fresh Synapse instance that uses
+     the same kgivler.com server identity and configuration."
+
+The recovery goal is NOT:
+
+    "Restore every user, room membership, event, message, token, database row,
+     thumbnail, upload, or cached remote media exactly as it existed."
+
+Therefore the Matrix backup includes only the small identity/configuration set:
+
+    /opt/stacks/matrix/compose.yaml
+    /opt/stacks/matrix/.env
+    /opt/stacks/matrix/synapse/homeserver.yaml
+    /opt/stacks/matrix/synapse/kgivler.com.log.config
+    /opt/stacks/matrix/synapse/kgivler.com.signing.key
+    /opt/stacks/matrix/synapse/registration_shared_secret
+
+Also preserve the external configuration required to make the homeserver
+reachable again:
+
+    - Cloudflare tunnel configuration/credentials for matrix.kgivler.com
+    - kgivler.com .well-known Matrix delegation configuration, where that
+      configuration is actually hosted
+
+EXPLICITLY NOT BACKED UP FOR MATRIX:
+
+    /opt/stacks/matrix/postgres/
+    PostgreSQL logical dumps
+    /opt/stacks/matrix/synapse/media_store/
+    thumbnails
+    remote media cache
+    local uploaded media
+    Matrix message/event history
+    room state/history
+    access-token/session state
+    user/account database state
+
+Consequences of this policy:
+    - the same Matrix server name and signing identity can be restored
+    - the Synapse deployment/configuration can be recreated
+    - the existing database-backed Matrix state is intentionally disposable
+    - local accounts and server-side room/membership/history state are NOT
+      recoverable from backup
+    - users/services may need to be recreated or rejoined after a catastrophic
+      disk loss
+
+This is an intentional "identity/configuration recovery" policy, not a complete
+Matrix service restore.
+
+If that policy changes later, the PostgreSQL database can be added as a separate
+offsite backup without changing the tiny P0 identity backup.
+
+===============================================================================
+9. HOST-MANAGED SYSTEMD SERVICES
 ===============================================================================
 
 Important running host services observed:
@@ -471,12 +518,15 @@ Important running host services observed:
         OpenSSH
     unbound.service
         Recursive/local DNS resolver
+    wpa_supplicant.service
 
 Other host-level services known to be relevant:
     WireGuard
 
+No failed systemd services were reported in the 2026-09-24 inventory.
+
 ===============================================================================
-9. SCHEDULED JOBS
+10. SCHEDULED JOBS
 ===============================================================================
 
 Custom timers:
@@ -496,40 +546,42 @@ Custom unit files observed:
     /etc/systemd/system/unbound-kuma-check.timer
     /etc/systemd/system/jump-ddns.service
     /etc/systemd/system/jump-ddns.timer
+    /etc/systemd/system/cloudflared.service
+    /etc/systemd/system/cloudflared-update.service
+    /etc/systemd/system/cloudflared-update.timer
+    /etc/systemd/system/pihole-FTL.service
 
-Other observed timers include:
-    apt-daily
-    apt-daily-upgrade
+Other normal timers include:
+    apt maintenance
     dpkg-db-backup
     logrotate
-    plocate-updatedb
+    plocate
     man-db
     systemd-tmpfiles-clean
     e2scrub_all
     fstrim
 
+No root crontab was present.
+
 ===============================================================================
-10. PI-HOLE / UNBOUND
+11. PI-HOLE / UNBOUND
 ===============================================================================
 
 Pi-hole:
     Host-managed through pihole-FTL.service
 
-    Version observed:
+    Previously inventoried versions:
         Core: v6.4.3
         Web:  v6.6
         FTL:  v6.7
 
-    FTL reported a newer available FTL release:
-        v6.7.1
-
     Main configuration/state directory:
         /etc/pihole
 
-    Total size at inventory:
+    Previously observed size:
         ~268 MB
 
-    Important size breakdown:
+    Previously observed size breakdown:
         /etc/pihole/pihole-FTL.db          ~240 MB
         /etc/pihole/pihole-FTL.db-wal      ~4.1 MB
         /etc/pihole/gravity.db              ~7.8 MB
@@ -540,17 +592,13 @@ Pi-hole:
         /etc/pihole/gravity_backups          ~440 KB
         /etc/pihole/pihole.toml              ~72 KB
 
-    Backup interpretation:
-        The apparent ~268 MB "Pi-hole config" footprint is dominated by the
-        query/history database pihole-FTL.db, not configuration.
+Backup interpretation:
+    The large Pi-hole footprint is dominated by query/history data, not by
+    irreplaceable configuration.
 
-        pihole.toml and the small configuration data are important and cheap to
-        preserve.
-
-        pihole-FTL.db is history/state and should be considered optional or
-        bucket-tier data rather than P0 recovery material.
-
-        listsCache and other downloaded lists are regeneratable.
+    Preserve the small useful configuration.
+    Do not treat pihole-FTL.db history as P0 recovery data.
+    Downloaded lists/caches are regeneratable.
 
 Unbound:
     Host-managed through unbound.service
@@ -561,39 +609,35 @@ Unbound:
     Configuration:
         /etc/unbound
 
-    Size at inventory:
+    Previously observed size:
         ~24 KB
 
 ===============================================================================
-11. CLOUDFLARED
+12. CLOUDFLARED
 ===============================================================================
 
 Service:
     cloudflared.service
 
-Version at inventory:
-    2026.9.1
-
-Configuration directory exists:
+Configuration directory:
     /etc/cloudflared
 
-Observed tunnel-backed local services include:
-    Matrix:
-        matrix.kgivler.com
+Observed tunnel-backed service:
+    matrix.kgivler.com
         -> http://127.0.0.1:8008
 
-    Uptime Kuma and The Lounge have also been served through Molasses'
-    Cloudflare Tunnel configuration.
+Uptime Kuma and The Lounge have also been served through Molasses' Cloudflare
+Tunnel configuration.
 
 IMPORTANT:
-    The exact startup token/credential mechanism was intentionally NOT dumped
-    during this inventory.
+    The exact startup token/credential mechanism has intentionally not been
+    dumped into this public document.
 
-    Do not print, commit, or document live Cloudflare tunnel tokens in this
-    public dossier.
+    Preserve whatever token/credential configuration is required for recovery,
+    but never commit live credentials to UsefulScripts.
 
 ===============================================================================
-12. LISTENING SERVICES
+13. LISTENING SERVICES
 ===============================================================================
 
 Important host listeners observed:
@@ -641,24 +685,31 @@ Uptime Kuma:
 Beszel agent:
     TCP/45876
 
-Other observed host listeners requiring documentation:
+Other observed listeners requiring documentation:
     TCP/20211
         nginx
     TCP/20214
         python3
 
-    Their exact application purpose was not fully inventoried in this pass.
-
 ===============================================================================
-13. PERSISTENT APPLICATION DATA
+14. PERSISTENT APPLICATION DATA
 ===============================================================================
 
-Matrix:
-    /opt/stacks/matrix/synapse
+Matrix identity/configuration backup set:
+    /opt/stacks/matrix/compose.yaml
+    /opt/stacks/matrix/.env
+    /opt/stacks/matrix/synapse/homeserver.yaml
+    /opt/stacks/matrix/synapse/kgivler.com.log.config
+    /opt/stacks/matrix/synapse/kgivler.com.signing.key
+    /opt/stacks/matrix/synapse/registration_shared_secret
+
+Matrix persistent data intentionally excluded:
     /opt/stacks/matrix/postgres
+    /opt/stacks/matrix/synapse/media_store
 
 Pi-hole:
     /etc/pihole
+    Select configuration only; do not blindly preserve all history/cache data.
 
 Unbound:
     /etc/unbound
@@ -694,49 +745,45 @@ Cloudflared:
     plus service configuration / credentials as deployed
 
 ===============================================================================
-14. KNOWN DATABASES / STATE STORES
+15. KNOWN DATABASES / STATE STORES
 ===============================================================================
 
 Matrix PostgreSQL:
     Live data:
         /opt/stacks/matrix/postgres
 
-    Backup method:
-        pg_dump or other PostgreSQL-consistent backup
-        DO NOT blindly copy the live data directory as the primary backup.
+    Current database size:
+        ~2699 MB
+
+    Backup policy:
+        intentionally NOT backed up under the current minimal Matrix policy.
 
 Pi-hole:
     /etc/pihole/pihole-FTL.db
-        ~240 MB
         query/history data
         not P0
 
     /etc/pihole/gravity.db
-        ~7.8 MB
-        useful Pi-hole state
+        useful but recreatable/replaceable depending on chosen Pi-hole policy
 
 Uptime Kuma:
-    Persistent application/database state beneath:
-        /opt/stacks/uptime-kuma/data
-
-Scrutiny:
-    InfluxDB state beneath:
-        /opt/stacks/scrutiny/influxdb
-
-Dockge:
-    Application state beneath:
-        /opt/dockge/data
+    /opt/stacks/uptime-kuma/data/kuma.db
 
 NetAlertX:
-    Persistent state beneath:
-        /opt/stacks/netalertx/data
+    /opt/stacks/netalertx/data/db/app.db
+
+Scrutiny:
+    /opt/stacks/scrutiny/config/scrutiny.db
+    /opt/stacks/scrutiny/influxdb/influxd.sqlite
+
+Dockge:
+    /opt/dockge/data/dockge.db
 
 The Lounge:
-    Persistent state beneath:
-        loungedocker_thelounge-data
+    persistent state in its Docker named volume
 
 ===============================================================================
-15. DOCKER NAMED VOLUMES
+16. DOCKER NAMED VOLUMES
 ===============================================================================
 
 Observed named volume:
@@ -745,65 +792,60 @@ loungedocker_thelounge-data
     Host path:
         /var/lib/docker/volumes/loungedocker_thelounge-data/_data
 
-    Size at inventory:
-        ~48 KB
-
 No other named Docker volumes were observed.
 
 ===============================================================================
-16. BACKUP ARCHITECTURE / POLICY
+17. BACKUP ARCHITECTURE / POLICY
 ===============================================================================
 
-Molasses backup design is intentionally split by data type.
-
-The VPSes should NOT become bulk storage for Molasses databases or Matrix media.
+Molasses backup design is intentionally split by data value rather than by
+directory size alone.
 
 A. TINY IRREPLACEABLE / IDENTITY / ACCESS MATERIAL
 
     Examples:
         Matrix signing key
-        Matrix database credentials / .env
+        Matrix .env / registration shared secret / homeserver config
         WireGuard private configuration
-        important SSH/access material as appropriate
-        other service identity keys or small secrets
+        important SSH/access material
+        Cloudflare credentials/configuration needed for recovery
+        backup repository credentials (stored separately/out-of-band as needed)
 
     Policy:
-        - include automatically when it is sensible and safe
-        - preserve in the main backup
-        - additionally keep a tiny encrypted/off-site peer copy on another VPS
-          where appropriate
+        - preserve automatically
+        - encrypted peer copy on a VPS where practical
+        - independent encrypted offsite object-storage copy
 
     Rationale:
-        These files are tiny, extremely important, and have negligible storage
-        impact.
+        These files are tiny, critical, and have negligible storage impact.
 
-B. MUTABLE DATABASE / APPLICATION DATA
-
-    Examples:
-        Matrix PostgreSQL logical dump
-        Uptime Kuma state
-        Scrutiny data if worth retaining
-        NetAlertX state if worth retaining
-        useful Pi-hole state
-        selected Dockge/The Lounge data
-
-    Destination:
-        object storage / bucket
-
-    Policy:
-        Do NOT dump these into Clanker or ScopeCreep as the primary destination.
-
-C. LARGE OR POTENTIALLY GROWING DATA
+B. SMALL USEFUL APPLICATION STATE
 
     Examples:
-        Matrix local user media
-        larger application databases/history
-
-    Destination:
-        object storage if preservation is desired
+        Uptime Kuma
+        selected NetAlertX state
+        selected Scrutiny state
+        selected Pi-hole configuration
+        Dockge/The Lounge state
+        custom systemd units and service configuration
 
     Policy:
-        apply explicit retention rather than allowing unbounded growth
+        Back up where worthwhile.
+        Prefer object storage plus peer copy when size is tiny.
+        Do not preserve large history/cache data just because it exists.
+
+C. MATRIX BULK / DATABASE STATE
+
+    Current examples:
+        PostgreSQL database: ~2.7 GB
+        Synapse media store: ~601 MB
+
+    Policy:
+        DO NOT BACK UP under the current minimal Matrix recovery policy.
+
+    Reason:
+        The goal is to recover the homeserver identity/configuration, not to
+        archive Matrix state.
 
 D. REPRODUCIBLE CONFIGURATION
 
@@ -816,8 +858,7 @@ D. REPRODUCIBLE CONFIGURATION
 
     Policy:
         Keep in Git where appropriate.
-        Small configuration may also be included automatically in the main
-        backup because the cost is negligible.
+        Small configuration may also be included in encrypted backups.
 
 E. REGENERATABLE / DO NOT BACK UP
 
@@ -825,76 +866,49 @@ E. REGENERATABLE / DO NOT BACK UP
     /var/lib/containerd
     Docker images
     container writable layers
-    Docker build/cache state
+    build/cache state
     package caches
     downloaded Pi-hole list cache
-    recreatable remote Matrix media/cache
-    other obvious caches
+    Matrix PostgreSQL database under current policy
+    Matrix media under current policy
+    other obvious caches/history not deliberately preserved
 
 ===============================================================================
-17. BACKUP PRIORITY MODEL
+18. BACKUP PRIORITY MODEL
 ===============================================================================
 
 P0 - irreplaceable identity / access / secrets:
     Matrix signing key
-    Matrix .env / database credentials
+    Matrix deployment/configuration secrets
+    Matrix registration shared secret
     WireGuard private configuration
     important SSH access material
-    Cloudflare credentials if required to restore service
+    Cloudflare credentials required for service restoration
+    backup-repository credentials
 
-P1 - important mutable application state:
-    PostgreSQL logical dump
-    selected Matrix local media
+P1 - small useful mutable state:
     Uptime Kuma state
-    selected Pi-hole state
-    other application databases worth preserving
+    selected Pi-hole configuration
+    selected NetAlertX/Scrutiny/Dockge/The Lounge state
+    other small application databases that are genuinely worth preserving
 
-P2 - useful configuration / convenience:
-    /opt/stacks
-    /opt/dockge configuration
+P2 - useful/reproducible configuration:
+    /opt/stacks Compose configuration
     /etc/unbound
-    selected /etc/pihole configuration
     custom systemd units/timers
     recovery inventory / manifests
+    package/service manifests
 
-P3 - regenerate instead:
+P3 - intentionally regenerate/lose:
+    Matrix PostgreSQL database
+    Matrix media store
+    Matrix history/account/room state
     /var/lib/docker
     /var/lib/containerd
     images/layers/cache
-    downloaded lists/caches
+    downloaded caches
     package caches
-    expendable query/history data if not intentionally retained
-
-===============================================================================
-18. MATRIX BACKUP NOTES
-===============================================================================
-
-The Matrix PostgreSQL database is critical to the homeserver, but critical does
-NOT mean it should be copied to another small VPS.
-
-Preferred design:
-
-    Molasses live PostgreSQL
-            |
-            | pg_dump + compression
-            v
-       object storage
-
-Separate tiny identity backup:
-
-    kgivler.com.signing.key
-    Matrix .env / important credentials
-            |
-            | encrypted tiny copy
-            v
-    Clanker and/or ScopeCreep
-
-Matrix media:
-    Local user-uploaded media should be backed up to object storage if preserving
-    it matters.
-
-    Remote/recreatable media cache should not consume backup capacity merely
-    because it exists locally.
+    expendable history data
 
 ===============================================================================
 19. RESTORE ORDER
@@ -902,29 +916,35 @@ Matrix media:
 
 Suggested high-level rebuild order:
 
-1. Provision Debian or a compatible successor.
-2. Restore basic administrator / SSH access.
+1. Reinstall Debian or a compatible successor.
+2. Restore administrator / SSH access.
 3. Restore network configuration.
 4. Restore WireGuard identity/configuration.
-5. Install Docker / Docker Compose.
-6. Restore /opt/stacks and /opt/dockge configuration.
-7. Restore tiny P0 secrets/identity material from secure backup.
+5. Restore UFW/network policy.
+6. Install Docker / Docker Compose.
+7. Restore Compose/configuration files.
 8. Restore Pi-hole and Unbound configuration.
 9. Restore custom systemd units/timers.
-10. Recreate/start basic Docker services.
-11. Recreate PostgreSQL for Matrix.
-12. Restore Matrix database from pg_dump.
-13. Restore Matrix signing key and homeserver configuration.
-14. Restore selected Matrix local media if backed up.
-15. Start Synapse and verify local client API.
-16. Restore/validate Cloudflare Tunnel.
-17. Verify matrix.kgivler.com client and federation APIs.
-18. Verify kgivler.com Matrix .well-known delegation.
-19. Verify Matrix federation by joining/reading a remote room.
-20. Restore remaining selected application state.
-21. Validate Pi-hole -> Unbound DNS flow.
-22. Validate Uptime Kuma / NetAlertX / Scrutiny / Beszel / Dozzle / Dockge.
-23. Enable and test scheduled backup jobs.
+10. Restore Cloudflare Tunnel configuration/credentials.
+11. Recreate PostgreSQL as a new empty Matrix database.
+12. Restore Matrix P0 files:
+        compose.yaml
+        .env
+        homeserver.yaml
+        log config
+        kgivler.com.signing.key
+        registration_shared_secret
+13. Start the fresh Matrix deployment.
+14. Verify matrix.kgivler.com client/federation APIs.
+15. Verify kgivler.com Matrix .well-known delegation.
+16. Recreate local Matrix users/services as needed.
+17. Rejoin/rebuild room memberships/state as needed.
+18. Restore selected Uptime Kuma / NetAlertX / Scrutiny / Dockge / The Lounge
+    state.
+19. Validate Pi-hole -> Unbound DNS flow.
+20. Enable and test scheduled backup jobs.
+21. Perform a representative encrypted peer restore.
+22. Perform a representative offsite-object-storage restore.
 
 ===============================================================================
 20. CURRENT HIGH-LEVEL SERVICE MAP
@@ -971,73 +991,46 @@ Home LAN / Internet
               +-- Dozzle agent
               +-- Dockge
 
-Matrix identity / discovery:
-
-    @user:kgivler.com
-            |
-            +-- https://kgivler.com/.well-known/matrix/client
-            |       -> https://matrix.kgivler.com
-            |
-            +-- https://kgivler.com/.well-known/matrix/server
-                    -> matrix.kgivler.com:443
-                              |
-                              v
-                       Cloudflare Tunnel
-                              |
-                              v
-                           Synapse
-                              |
-                              v
-                         PostgreSQL
-
 ===============================================================================
 21. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
 Still worth checking later:
 
-1. Verify BIOS A08 against Dell's latest Inspiron 3847 firmware.
-   Do not flash casually; confirm exact model, update path, and stable power first.
+1. Choose the object-storage provider/bucket for Molasses backups.
 
-2. Choose the object-storage provider/bucket for Molasses backups.
+2. Implement the Molasses backup script using the minimal Matrix policy in this
+   document.
 
-3. Implement the Molasses backup script only after the bucket destination and
-   authentication method are chosen.
+3. Inventory the exact useful Pi-hole configuration/state files and avoid
+   treating pihole-FTL.db query-history data as mandatory recovery state.
 
-4. Define Matrix retention:
-       - local media policy
-       - remote media/cache policy
-       - PostgreSQL retention / dump cadence
+4. Inventory cloudflared safely without exposing its tunnel token or credentials.
 
-5. Inventory the exact useful Pi-hole configuration/state files and avoid
-   treating the 240 MB pihole-FTL.db query-history database as mandatory P0 data.
-
-6. Inventory cloudflared safely without exposing its tunnel token or credentials.
-
-7. Identify/document the services on:
+5. Identify/document:
        TCP/20211  (nginx)
        TCP/20214  (python3)
 
-8. Verify PairDrop TCP/3000 exposure from outside the LAN/WireGuard network.
-   Docker-published ports can interact with firewall rules in surprising ways.
+6. Verify PairDrop TCP/3000 exposure from outside the LAN/WireGuard network.
 
-9. Map exact Docker network names to the observed 172.17.0.0/16 through
-   172.24.0.0/16 subnets if needed.
+7. Decide the intended role of /dev/sdb.
 
-10. If Molasses ever participates in DN42, migrate Docker away from
-    172.20.0.0/14 first.
+8. If Molasses ever participates in DN42, migrate Docker away from
+   172.20.0.0/14 first.
 
-11. Identify which application databases need explicit consistent snapshots:
-        Uptime Kuma
-        NetAlertX
-        Scrutiny
-        Dockge
-        Pi-hole
-        others as discovered
+9. Decide which non-Matrix application databases are worth consistent snapshots:
+       Uptime Kuma
+       NetAlertX
+       Scrutiny
+       Dockge
+       Pi-hole
+       The Lounge
 
-12. Create and test the first object-storage backup.
+10. Create and test the first encrypted peer backup of P0/small state.
 
-13. Perform a clean restore test after the backup system is implemented.
+11. Create and test the first independent object-storage backup.
+
+12. Perform clean restore tests from both destinations.
 
 ===============================================================================
 22. SUMMARY
@@ -1047,7 +1040,6 @@ Molasses is an old but currently healthy Dell Inspiron 3847 home server running
 Debian 13 on a 1 TB mechanical HDD.
 
 Its current responsibilities include:
-
     - Pi-hole
     - Unbound
     - Matrix Synapse + PostgreSQL
@@ -1063,25 +1055,24 @@ Its current responsibilities include:
     - Beszel agent
 
 The mechanical HDD is not itself the problem; allowing it to hold the only copy
-of irreplaceable data would be.
+of irreplaceable identity/configuration material would be.
 
 The intended backup model is:
 
     tiny irreplaceable identity/secrets
-        -> main backup + encrypted tiny peer copy where sensible
+        -> encrypted peer copy + independent encrypted offsite copy
 
-    databases / mutable application state
-        -> object storage
+    small useful application state
+        -> preserve selectively where worthwhile
 
-    large/growing preserved data
-        -> object storage with explicit retention
+    Matrix PostgreSQL + media
+        -> intentionally NOT backed up under the current minimal-recovery policy
 
     reproducible configuration
-        -> Git and/or included cheaply in backup
+        -> Git where appropriate + cheap encrypted backup where useful
 
     Docker/runtime/cache data
         -> recreate instead
 
-The next infrastructure task is NOT to keep adding services. It is to choose the
-object-storage destination, implement a Molasses backup around this documented
-policy, and test that a restore is actually possible.
+For Matrix specifically, the backup objective is to retain the kgivler.com
+homeserver identity and configuration, not to preserve historical Matrix state.

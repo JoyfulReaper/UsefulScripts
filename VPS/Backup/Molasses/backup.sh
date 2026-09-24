@@ -11,6 +11,9 @@ readonly PEER_ENV="/etc/vps-backup/peer.env"
 readonly PEER_PASSWORD_FILE="/etc/vps-backup/peer-repository-password"
 readonly PEER_REPOSITORY="rest:http://10.99.0.1:8000/molasses/"
 
+readonly B2_ENV="/etc/vps-backup/b2.env"
+readonly B2_REPOSITORY="s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-molasses"
+
 readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
 readonly NTFY_URL="http://10.99.0.1:5197/vps-backups"
 
@@ -178,6 +181,9 @@ done
 [[ -f "$PEER_PASSWORD_FILE" ]] ||
     die "Missing $PEER_PASSWORD_FILE"
 
+[[ -f "$B2_ENV" ]] ||
+    die "Missing $B2_ENV"
+
 [[ -f "$NTFY_ENV" ]] ||
     die "Missing $NTFY_ENV"
 
@@ -203,13 +209,14 @@ set -a
 source "$PEER_ENV"
 
 # shellcheck disable=SC1091
+source "$B2_ENV"
+
+# shellcheck disable=SC1091
 source "$NTFY_ENV"
 
 set +a
 
 
-export RESTIC_PASSWORD_FILE="$PEER_PASSWORD_FILE"
-export RESTIC_REPOSITORY="$PEER_REPOSITORY"
 
 
 log "Starting Molasses backup."
@@ -223,8 +230,28 @@ CURRENT_STAGE="peer repository connectivity"
 
 log "Checking Clanker repository connectivity."
 
-restic cat config >/dev/null ||
+restic \
+    -r "$PEER_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    cat config \
+    >/dev/null ||
     die "Unable to access Molasses repository on Clanker."
+
+
+#
+# Verify B2 repository
+#
+
+CURRENT_STAGE="B2 repository connectivity"
+
+log "Checking Backblaze B2 repository connectivity."
+
+restic \
+    -r "$B2_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    cat config \
+    >/dev/null ||
+    die "Unable to access Molasses repository on Backblaze B2."
 
 
 #
@@ -446,10 +473,35 @@ log "Sending snapshot to Clanker."
 (
     cd "$STAGING"
 
-    restic backup . \
+    restic \
+        -r "$PEER_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        backup . \
         --host molasses \
         --tag molasses \
         --tag peer
+)
+
+
+#
+# Backup to Backblaze B2
+#
+
+CURRENT_STAGE="restic B2 backup"
+
+log "Sending snapshot to Backblaze B2."
+
+(
+    cd "$STAGING"
+
+    restic \
+        -r "$B2_REPOSITORY" \
+        --password-file "$PEER_PASSWORD_FILE" \
+        backup . \
+        --host molasses \
+        --tag molasses \
+        --tag offsite \
+        --tag b2
 )
 
 
@@ -461,14 +513,28 @@ CURRENT_STAGE="complete"
 
 log "Molasses backup completed successfully in $(duration)."
 
-restic snapshots \
+log "Recent Clanker snapshots."
+
+restic \
+    -r "$PEER_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    snapshots \
+    --host molasses \
+    --latest 3 || true
+
+log "Recent Backblaze B2 snapshots."
+
+restic \
+    -r "$B2_REPOSITORY" \
+    --password-file "$PEER_PASSWORD_FILE" \
+    snapshots \
     --host molasses \
     --latest 3 || true
 
 
 SUCCESS_MESSAGE="$(
     printf \
-        'Host: Molasses\nDestination: Clanker\nRuntime: %s\nStatus: backup completed successfully' \
+        'Host: Molasses\nDestinations: Clanker + Backblaze B2\nRuntime: %s\nStatus: both backups completed successfully' \
         "$(duration)"
 )"
 

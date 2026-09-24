@@ -1,0 +1,11 @@
+[Unit]
+Description=Maintain Molasses restic backup repository
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/molasses-backup-maintenance
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=0

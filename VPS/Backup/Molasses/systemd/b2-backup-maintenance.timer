@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Molasses Backblaze B2 backup repository maintenance
+
+[Timer]
+OnCalendar=Sun *-*-* 08:45:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

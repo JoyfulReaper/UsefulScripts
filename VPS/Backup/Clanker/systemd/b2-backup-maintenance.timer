@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Clanker Backblaze B2 backup repository maintenance
+
+[Timer]
+OnCalendar=Sun *-*-* 07:15:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Maintain Clanker Backblaze B2 restic repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/b2-backup-maintenance
+Environment=HOME=/root
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=0

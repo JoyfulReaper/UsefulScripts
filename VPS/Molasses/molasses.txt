@@ -1,13 +1,14 @@
 MOLASSES
 ========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-24
+Snapshot date: 2026-09-25
 
 PURPOSE
 -------
 Molasses is Kyle's always-on home Debian server. It currently acts as a local
 network utility host, DNS resolver/filter, Docker application host, monitoring
-host, IRC/web utility host, and Matrix homeserver.
+host, IRC/web utility host, Matrix homeserver, backup client, and DN42 client
+routed through Clanker over WireGuard.
 
 This file is intended to answer:
 - What is Molasses?
@@ -16,17 +17,17 @@ This file is intended to answer:
 - Where is its configuration?
 - Where is persistent data?
 - Which secrets and identities are irreplaceable?
-- What should actually be backed up?
+- What is actually backed up?
 - What is intentionally NOT backed up?
 - What would be needed to rebuild it after a drive failure?
+- How does Molasses reach DN42 and resolve DN42 DNS?
 
 It is deliberately broader than a backup manifest.
 
-The backup policy is intentionally conservative. In particular, Matrix is NOT
-being treated as a full-state archival service. The goal for Matrix is to retain
-the absolute minimum required to rebuild the same homeserver identity and
-configuration after a disk failure, not to preserve the PostgreSQL database,
-room/event history, or media store.
+The Matrix backup policy is intentionally conservative. Matrix is NOT treated
+as a full-state archival service. The recovery goal is to retain the minimum
+identity/configuration required to rebuild the same homeserver identity after a
+disk failure, not to preserve PostgreSQL history, room/event history, or media.
 
 ===============================================================================
 1. HOST / HARDWARE
@@ -37,7 +38,7 @@ Hostname:
 
 Platform:
     Debian GNU/Linux 13 (trixie)
-    Kernel: Linux 6.12.107+deb13-amd64
+    Kernel previously inventoried: Linux 6.12.107+deb13-amd64
     Architecture: x86_64
 
 Hardware:
@@ -53,40 +54,26 @@ Firmware / BIOS:
     Release date: 2015-06-29
 
 Primary storage:
-    Disk:
-        /dev/sda
-        WDC WD10EZEX-75M2NA0
-        ~1 TB / 931.5 GiB
-        7200 RPM mechanical HDD
+    /dev/sda
+    WDC WD10EZEX-75M2NA0
+    ~1 TB / 931.5 GiB
+    7200 RPM mechanical HDD
 
-    Partitions:
-        /dev/sda1  ~976 MiB vfat  /boot/efi
-        /dev/sda2  ~922.6 GiB ext4 /
-        /dev/sda3  ~7.9 GiB swap
+Partitions previously inventoried:
+    /dev/sda1  ~976 MiB vfat  /boot/efi
+    /dev/sda2  ~922.6 GiB ext4 /
+    /dev/sda3  ~7.9 GiB swap
 
-    Root filesystem at 2026-09-24 inventory:
-        Size: ~908 GiB
-        Used: ~13 GiB
-        Available: ~849 GiB
-        Usage: ~2%
-
-A second block device /dev/sdb was visible but had no filesystem or mount shown
-in the current inventory. Its intended role is not yet documented.
-
-Previously observed SMART status:
+Previously observed SMART state:
     Overall health: PASSED
     Reallocated sectors: 0
     Current pending sectors: 0
     Offline uncorrectable sectors: 0
     UDMA CRC errors: 0
     Logged SMART errors: none
-    Extended self-test: completed without error
-    Power-on hours at that snapshot: ~14,461
-    Temperature at that snapshot: ~37 C
 
-Storage policy:
-    The HDD is currently healthy enough for service, but important live state
-    must not exist only on this disk.
+A second block device /dev/sdb has previously been visible without a documented
+filesystem/mount. Its intended role remains to be decided.
 
 Primary service managers:
     - systemd
@@ -106,7 +93,7 @@ LAN IPv4:
     192.168.1.5/24
 
 LAN IPv6:
-    Global IPv6 is present on wifi0.
+    Native ISP global IPv6 is present on wifi0.
     Exact residential/global IPv6 addresses are intentionally omitted here.
 
 Default IPv4 gateway:
@@ -114,43 +101,83 @@ Default IPv4 gateway:
 
 Ethernet:
     enp3s0
-    currently DOWN
+    previously observed DOWN
 
 WireGuard:
     Interface: wg0
-    IPv4: 10.99.0.10/24
-    IPv6:
+
+    Current addresses verified 2026-09-25:
+        10.99.0.10/24
         fd42:42:42::10/64
-        an additional routed public /128 from Clanker's IPv6 prefix
+        172.20.220.59/32
+        fdf0:e12c:5528::59/128
+        2607:f2d8:8416:10c1::10/128
+
+    DN42 client addresses:
+        IPv4: 172.20.220.59/32
+        IPv6: fdf0:e12c:5528::59/128
+
+    Clanker peer endpoint:
+        142.4.38.224:51820
+
+    Persistent keepalive:
+        25 seconds
 
     Configuration:
         /etc/wireguard
 
-Observed WireGuard routes:
-    10.99.0.0/24 via wg0
-    fd42:42:42::/64 via wg0
+    Allowed/routed ranges observed from the Clanker peer:
+        10.99.0.0/24
+        fd42:42:42::/64
+        172.20.0.0/14
+        172.31.0.0/16
+        10.100.0.0/14
+        10.127.0.0/16
+        fd00::/8
+
+DN42 routing verified 2026-09-25:
+    172.20.0.53
+        dev wg0
+        source 172.20.220.59
+
+    172.23.0.53
+        dev wg0
+        source 172.20.220.59
+
+    fd42:d42:d42:54::1
+        dev wg0
+        source fdf0:e12c:5528::59
+
+    fd42:d42:d42:53::1
+        dev wg0
+        source fdf0:e12c:5528::59
+
+DN42 topology:
+    Molasses is NOT a DN42 BGP router.
+    Molasses receives DN42 connectivity from Clanker over the existing WireGuard
+    tunnel.
+
+    Clanker performs the DN42 routing/BGP work.
+    Molasses is an attached DN42 client/service host.
 
 Normal Internet IPv6:
     Uses the native ISP IPv6 connection through wifi0.
 
-Molasses also retains a Clanker-routed public IPv6 /128 on wg0 from an older
-routing setup. Its continued need should be reviewed now that native ISP IPv6
-is available.
+Clanker-routed public IPv6:
+    Molasses retains:
+        2607:f2d8:8416:10c1::10/128
+    on wg0 from an older routing arrangement.
 
-IPv4 forwarding:
-    enabled
-
-IPv6 forwarding:
-    disabled
+    Its continued need should be reviewed now that native ISP IPv6 exists.
 
 ===============================================================================
-3. FIREWALL
+3. FIREWALL / ROUTING
 ===============================================================================
 
 Firewall:
     UFW enabled.
 
-Default policy:
+Previously inventoried default policy:
     incoming: deny
     outgoing: allow
     routed: deny
@@ -158,7 +185,7 @@ Default policy:
 Logging:
     low
 
-Important LAN-scoped services on wifi0:
+Important LAN-scoped services previously observed on wifi0:
     DNS:
         TCP/53
         UDP/53
@@ -172,7 +199,7 @@ Important LAN-scoped services on wifi0:
     TCP/20211:
         LAN-only
 
-Important WireGuard-scoped services:
+Important WireGuard-scoped services previously observed:
     TCP/45876
         Beszel agent
     TCP/22
@@ -181,108 +208,144 @@ Important WireGuard-scoped services:
     DNS:
         TCP/53
         UDP/53
-        restricted to the WireGuard ranges
 
-Important note:
-    Docker-published ports should be treated separately from UFW assumptions.
-    Docker's iptables/nftables integration can affect reachability independently
-    of simple "ufw status" output.
+Docker-published ports must be evaluated separately from simple UFW output.
+Docker's packet-filter integration can affect reachability independently.
 
-PairDrop currently publishes TCP/3000 on IPv4 and IPv6 wildcard addresses. Its
-actual reachability from untrusted networks should be verified.
+PairDrop has previously published TCP/3000 on IPv4 and IPv6 wildcard addresses.
+Its actual reachability from untrusted networks should remain on the audit list.
 
 ===============================================================================
-4. DOCKER
+4. DN42
 ===============================================================================
 
-Docker Engine at current inventory:
+Molasses currently participates in DN42 as a routed client behind Clanker.
+
+DN42 identity on Molasses:
+    IPv4:
+        172.20.220.59/32
+
+    IPv6:
+        fdf0:e12c:5528::59/128
+
+Parent/router:
+    Clanker
+    AS4242420425
+
+Transport from Molasses to Clanker:
+    Existing wg0 WireGuard tunnel
+
+Current design:
+    Molasses does not run BIRD.
+    Molasses does not establish BGP peerings.
+    Molasses does not advertise a separate DN42 prefix.
+    DN42 destinations are routed through Clanker.
+
+Verified use:
+    DN42 recursive DNS anycast IPv4 and IPv6 addresses are reachable through
+    wg0 using Molasses' DN42 source addresses.
+
+This makes Molasses useful as:
+    - a DN42 test client
+    - a DNS client/resolver host for DN42
+    - a possible future DN42 service host
+    - a home-network test point independent of Clanker's local network stack
+
+===============================================================================
+5. DOCKER
+===============================================================================
+
+Docker Engine previously inventoried:
     29.8.1
 
-Docker Compose:
+Docker Compose previously inventoried:
     v5.5.1
 
 Docker and containerd:
-    enabled and running
+    enabled and running in the prior host inventory
 
 Docker runtime/cache:
     /var/lib/docker
     /var/lib/containerd
 
-Current Docker disk use:
-    Images:      ~6.2 GB
-    Containers:  ~14 MB
-    Build cache: 0
-    Named volumes: one small The Lounge volume
+Runtime/image/cache trees are regeneratable and should NOT be primary backup
+data.
 
-These runtime/image/cache trees are regeneratable and should NOT be treated as
-primary backup data.
+Current Docker networks verified 2026-09-25:
 
-Observed Docker bridge address space includes:
-    172.17.0.0/16
-    172.18.0.0/16
-    172.19.0.0/16
-    172.20.0.0/16
-    172.21.0.0/16
-    172.22.0.0/16
-    172.23.0.0/16
-    172.24.0.0/16
+    bridge:
+        192.168.63.0/24
 
-IMPORTANT DN42 NOTE:
-    Docker currently occupies 172.20.0.0/16 and adjacent ranges inside DN42's
-    172.20.0.0/14 space.
+    dockge_default:
+        192.168.64.0/24
 
-    Molasses is not currently acting as a DN42 router, so this is not an active
-    problem. If Molasses later joins DN42, move Docker's address pools away from
-    172.20.0.0/14 first, as was done on Clanker.
+    dozzle-agent_default:
+        192.168.65.0/24
+
+    matrix_default:
+        192.168.66.0/24
+
+    pairdrop_default:
+        192.168.67.0/24
+
+    scrutiny_default:
+        192.168.68.0/24
+
+    thelounge_default:
+        192.168.69.0/24
+
+    uptime-kuma_default:
+        192.168.70.0/24
+
+DN42 collision status:
+    RESOLVED.
+
+    Older Molasses inventory showed Docker networks occupying 172.20.0.0/16
+    through adjacent 172.x networks that overlapped DN42's 172.20.0.0/14 space.
+
+    Docker is now using 192.168.63.0/24 through 192.168.70.0/24 instead.
+
+    This matters because Molasses now actively receives DN42 routes from Clanker.
 
 ===============================================================================
-5. DOCKER COMPOSE PROJECTS
+6. DOCKER COMPOSE PROJECTS
 ===============================================================================
 
-Current Compose projects:
+Previously/currently known Compose projects:
 
 1. beszel-agent
-   Config:
-       /opt/stacks/beszel-agent/compose.yaml
+   /opt/stacks/beszel-agent/compose.yaml
 
 2. dockge
-   Config:
-       /opt/dockge/compose.yml
+   /opt/dockge/compose.yml
 
 3. dozzle-agent
-   Config:
-       /opt/stacks/dozzle-agent/compose.yaml
+   /opt/stacks/dozzle-agent/compose.yaml
 
 4. matrix
-   Config:
-       /opt/stacks/matrix/compose.yaml
+   /opt/stacks/matrix/compose.yaml
    Environment:
        /opt/stacks/matrix/.env
 
 5. netalertx
-   Config:
-       /opt/stacks/netalertx/compose.yaml
+   /opt/stacks/netalertx/compose.yaml
 
 6. pairdrop
-   Config:
-       /opt/stacks/pairdrop/compose.yaml
+   /opt/stacks/pairdrop/compose.yaml
    Environment:
        /opt/stacks/pairdrop/.env
 
 7. scrutiny
-   Config:
-       /opt/stacks/scrutiny/compose.yaml
+   /opt/stacks/scrutiny/compose.yaml
 
 8. thelounge
-   Config:
-       /opt/stacks/thelounge/compose.yaml
+   /opt/stacks/thelounge/compose.yaml
 
 9. uptime-kuma
-   Config:
-       /opt/stacks/uptime-kuma/compose.yaml
+   /opt/stacks/uptime-kuma/compose.yaml
 
 ===============================================================================
-6. DOCKER SERVICES
+7. DOCKER SERVICES
 ===============================================================================
 
 Matrix / Synapse:
@@ -290,80 +353,60 @@ Matrix / Synapse:
         matrix-synapse
         matrix-postgres
 
-    Synapse image:
+    Synapse image previously observed:
         matrixdotorg/synapse:latest
 
-    PostgreSQL image:
+    PostgreSQL image previously observed:
         postgres:16-alpine
 
-    Synapse:
-        healthy at current inventory
-        host binding:
-            127.0.0.1:8008 -> container TCP/8008
+    Synapse host binding:
+        127.0.0.1:8008 -> container TCP/8008
 
     PostgreSQL:
-        healthy at current inventory
-        TCP/5432 is container-internal only
+        TCP/5432 container-internal
 
     Persistent paths:
         /opt/stacks/matrix/synapse
         /opt/stacks/matrix/postgres
 
 NetAlertX:
-    Persistent data:
-        /opt/stacks/netalertx/data -> /data
+    /opt/stacks/netalertx/data -> /data
 
 PairDrop:
-    Published:
-        TCP/3000 on IPv4 and IPv6 wildcard addresses
-    No persistent container mount was observed.
+    TCP/3000
+    no persistent container mount previously observed
 
 Uptime Kuma:
-    Published:
-        127.0.0.1:3001 -> container TCP/3001
-    Persistent data:
-        /opt/stacks/uptime-kuma/data -> /app/data
+    127.0.0.1:3001 -> container TCP/3001
+    /opt/stacks/uptime-kuma/data -> /app/data
 
 Scrutiny:
-    Published:
-        10.99.0.10:8082 -> container TCP/8080
-    Persistent data:
-        /opt/stacks/scrutiny/config
-        /opt/stacks/scrutiny/influxdb
+    10.99.0.10:8082 -> container TCP/8080
+    /opt/stacks/scrutiny/config
+    /opt/stacks/scrutiny/influxdb
 
 The Lounge:
-    Published:
-        127.0.0.1:9000 -> container TCP/9000
-    Persistent Docker named volume:
+    127.0.0.1:9000 -> container TCP/9000
+    Docker named volume:
         loungedocker_thelounge-data
-    Host path:
-        /var/lib/docker/volumes/loungedocker_thelounge-data/_data
 
 Beszel agent:
-    Listener:
-        TCP/45876
-    Persistent data:
-        /opt/stacks/beszel-agent/beszel_agent_data
-    Other mount:
-        /var/run/docker.sock
+    TCP/45876
+    /opt/stacks/beszel-agent/beszel_agent_data
+    /var/run/docker.sock
 
 Dozzle agent:
-    Published:
-        10.99.0.10:7007 -> container TCP/7007
-    Mount:
-        /var/run/docker.sock
+    10.99.0.10:7007 -> container TCP/7007
+    /var/run/docker.sock
 
 Dockge:
-    Published:
-        10.99.0.10:5001 -> container TCP/5001
-    Persistent/configuration mounts:
-        /opt/stacks -> /opt/stacks
-        /opt/dockge/data -> /app/data
-    Other mount:
-        /var/run/docker.sock
+    10.99.0.10:5001 -> container TCP/5001
+    /opt/stacks -> /opt/stacks
+    /opt/dockge/data -> /app/data
+    /var/run/docker.sock
 
 ===============================================================================
-7. MATRIX
+8. MATRIX
 ===============================================================================
 
 Homeserver implementation:
@@ -394,24 +437,11 @@ Previously verified:
     - public federation API
     - .well-known client discovery
     - .well-known federation discovery
-    - working federation with public remote rooms
+    - federation with public remote rooms
 
-Current Matrix disk use:
-    /opt/stacks/matrix                 ~3.4 GB
-    /opt/stacks/matrix/postgres        ~2.8 GB
-    /opt/stacks/matrix/postgres/base   ~2.7 GB
-    /opt/stacks/matrix/synapse         ~601 MB
-    /opt/stacks/matrix/synapse/media_store
-                                       ~601 MB
-
-Current PostgreSQL database size reported from inside the container:
-    synapse                            ~2699 MB
-
-Important Matrix files currently identified:
-
+Important Matrix identity/configuration files:
     /opt/stacks/matrix/compose.yaml
     /opt/stacks/matrix/.env
-
     /opt/stacks/matrix/synapse/homeserver.yaml
     /opt/stacks/matrix/synapse/kgivler.com.log.config
     /opt/stacks/matrix/synapse/kgivler.com.signing.key
@@ -420,42 +450,29 @@ Important Matrix files currently identified:
 P0 Matrix identity:
     /opt/stacks/matrix/synapse/kgivler.com.signing.key
 
-    This is the server signing identity and must not exist only on Molasses'
-    mechanical disk.
-
-Other secret-bearing Matrix material:
-    /opt/stacks/matrix/.env
-    /opt/stacks/matrix/synapse/registration_shared_secret
-    secrets referenced by homeserver.yaml
-
-    Do not commit their contents to this public repository.
-
 Registration:
     closed
 
 Current design:
-    Synapse + PostgreSQL only.
+    Synapse + PostgreSQL.
     No Redis/workers/identity server/bridges/TURN/Element Web are part of the
-    initial deployment.
+    original deployment design.
 
 ===============================================================================
-8. MATRIX MINIMAL DISASTER-RECOVERY POLICY
+9. MATRIX MINIMAL DISASTER-RECOVERY POLICY
 ===============================================================================
 
 Matrix is intentionally NOT receiving a full backup.
 
-The recovery goal is:
+Recovery goal:
+    Rebuild a fresh Synapse instance using the same kgivler.com server identity
+    and configuration.
 
-    "After the Molasses drive dies, rebuild a fresh Synapse instance that uses
-     the same kgivler.com server identity and configuration."
+Recovery goal is NOT:
+    Restore every user, room membership, event, message, token, database row,
+    thumbnail, upload, or cached remote media.
 
-The recovery goal is NOT:
-
-    "Restore every user, room membership, event, message, token, database row,
-     thumbnail, upload, or cached remote media exactly as it existed."
-
-Therefore the Matrix backup includes only the small identity/configuration set:
-
+Included identity/configuration set:
     /opt/stacks/matrix/compose.yaml
     /opt/stacks/matrix/.env
     /opt/stacks/matrix/synapse/homeserver.yaml
@@ -463,15 +480,11 @@ Therefore the Matrix backup includes only the small identity/configuration set:
     /opt/stacks/matrix/synapse/kgivler.com.signing.key
     /opt/stacks/matrix/synapse/registration_shared_secret
 
-Also preserve the external configuration required to make the homeserver
-reachable again:
-
+External configuration also required:
     - Cloudflare tunnel configuration/credentials for matrix.kgivler.com
-    - kgivler.com .well-known Matrix delegation configuration, where that
-      configuration is actually hosted
+    - kgivler.com .well-known Matrix delegation
 
-EXPLICITLY NOT BACKED UP FOR MATRIX:
-
+Explicit Matrix exclusions:
     /opt/stacks/matrix/postgres/
     PostgreSQL logical dumps
     /opt/stacks/matrix/synapse/media_store/
@@ -483,77 +496,78 @@ EXPLICITLY NOT BACKED UP FOR MATRIX:
     access-token/session state
     user/account database state
 
-Consequences of this policy:
-    - the same Matrix server name and signing identity can be restored
-    - the Synapse deployment/configuration can be recreated
-    - the existing database-backed Matrix state is intentionally disposable
-    - local accounts and server-side room/membership/history state are NOT
-      recoverable from backup
-    - users/services may need to be recreated or rejoined after a catastrophic
-      disk loss
-
-This is an intentional "identity/configuration recovery" policy, not a complete
-Matrix service restore.
-
-If that policy changes later, the PostgreSQL database can be added as a separate
-offsite backup without changing the tiny P0 identity backup.
+This is an intentional identity/configuration recovery policy, not a complete
+Matrix state restore.
 
 ===============================================================================
-9. HOST-MANAGED SYSTEMD SERVICES
+10. HOST-MANAGED SYSTEMD SERVICES
 ===============================================================================
 
-Important running host services observed:
+Important host services previously/currently known:
     cloudflared.service
-        Cloudflare Tunnel client
     containerd.service
-        Container runtime
     cron.service
     docker.service
-        Docker Engine
-    ModemManager.service
     NetworkManager.service
     pihole-FTL.service
-        Pi-hole DNS/web/FTL service
     smartmontools.service
-        SMART monitoring
     ssh.service
-        OpenSSH
     unbound.service
-        Recursive/local DNS resolver
     wpa_supplicant.service
 
-Other host-level services known to be relevant:
-    WireGuard
+WireGuard:
+    wg0 is operational and actively carrying DN42 traffic to/from Clanker.
 
-No failed systemd services were reported in the 2026-09-24 inventory.
+DNS service status verified 2026-09-25:
+    pihole-FTL:
+        active
+
+    unbound:
+        active
 
 ===============================================================================
-10. SCHEDULED JOBS
+11. SCHEDULED JOBS
 ===============================================================================
 
-Custom timers:
+Known custom timers:
 
 unbound-kuma-check.timer
-    Runs approximately every minute.
-    Activates:
+    approximately every minute
+    activates:
         unbound-kuma-check.service
 
 jump-ddns.timer
-    Runs approximately every 15 minutes.
-    Activates:
+    approximately every 15 minutes
+    activates:
         jump-ddns.service
 
-Custom unit files observed:
-    /etc/systemd/system/unbound-kuma-check.service
-    /etc/systemd/system/unbound-kuma-check.timer
-    /etc/systemd/system/jump-ddns.service
-    /etc/systemd/system/jump-ddns.timer
-    /etc/systemd/system/cloudflared.service
-    /etc/systemd/system/cloudflared-update.service
-    /etc/systemd/system/cloudflared-update.timer
-    /etc/systemd/system/pihole-FTL.service
+vps-backup.timer
+    Daily Molasses backup.
+    Schedule:
+        02:45 local system time
+        RandomizedDelaySec=15m
+        Persistent=true
 
-Other normal timers include:
+    Service:
+        vps-backup.service
+
+    ExecStart:
+        /usr/local/sbin/vps-backup
+
+b2-backup-maintenance.timer
+    Weekly Molasses Backblaze B2 restic maintenance.
+    Schedule:
+        Sunday 08:45 local system time
+        RandomizedDelaySec=15m
+        Persistent=true
+
+    Service:
+        b2-backup-maintenance.service
+
+    ExecStart:
+        /usr/local/sbin/b2-backup-maintenance
+
+Other previously observed normal timers:
     apt maintenance
     dpkg-db-backup
     logrotate
@@ -563,47 +577,28 @@ Other normal timers include:
     e2scrub_all
     fstrim
 
-No root crontab was present.
-
 ===============================================================================
-11. PI-HOLE / UNBOUND
+12. PI-HOLE / UNBOUND
 ===============================================================================
 
 Pi-hole:
-    Host-managed through pihole-FTL.service
+    Host-managed through:
+        pihole-FTL.service
 
-    Previously inventoried versions:
-        Core: v6.4.3
-        Web:  v6.6
-        FTL:  v6.7
-
-    Main configuration/state directory:
+    Main configuration/state:
         /etc/pihole
 
-    Previously observed size:
-        ~268 MB
+    Previous inventory showed that most Pi-hole disk usage was query/history
+    data rather than irreplaceable configuration.
 
-    Previously observed size breakdown:
-        /etc/pihole/pihole-FTL.db          ~240 MB
-        /etc/pihole/pihole-FTL.db-wal      ~4.1 MB
-        /etc/pihole/gravity.db              ~7.8 MB
-        /etc/pihole/gravity_old.db          ~8.0 MB
-        /etc/pihole/listsCache              ~3.5 MB
-        /etc/pihole/macvendor.db             ~3.4 MB
-        /etc/pihole/config_backups           ~1.1 MB
-        /etc/pihole/gravity_backups          ~440 KB
-        /etc/pihole/pihole.toml              ~72 KB
-
-Backup interpretation:
-    The large Pi-hole footprint is dominated by query/history data, not by
-    irreplaceable configuration.
-
-    Preserve the small useful configuration.
-    Do not treat pihole-FTL.db history as P0 recovery data.
-    Downloaded lists/caches are regeneratable.
+    Backup policy:
+        Preserve useful configuration.
+        Do not treat pihole-FTL.db history as P0 recovery data.
+        Downloaded list/cache data is regeneratable.
 
 Unbound:
-    Host-managed through unbound.service
+    Host-managed through:
+        unbound.service
 
     Listener:
         127.0.0.1:5335 TCP/UDP
@@ -611,11 +606,94 @@ Unbound:
     Configuration:
         /etc/unbound
 
-    Previously observed size:
-        ~24 KB
+    DN42 configuration:
+        /etc/unbound/unbound.conf.d/dn42.conf
+
+Current DNS flow:
+    LAN / WireGuard clients
+        -> Pi-hole / pihole-FTL :53
+        -> Unbound 127.0.0.1:5335
+        -> normal recursive DNS and, for DN42 zones, DN42 anycast resolvers
+
+DN42 forward DNS:
+    dn42.
+
+DN42 IPv4 reverse DNS:
+    20.172.in-addr.arpa.
+    21.172.in-addr.arpa.
+    22.172.in-addr.arpa.
+    23.172.in-addr.arpa.
+
+DN42 IPv6 reverse DNS:
+    d.f.ip6.arpa.
+
+DN42 recursive anycast resolvers:
+    172.20.0.53
+    172.23.0.53
+    fd42:d42:d42:54::1
+    fd42:d42:d42:53::1
+
+Unbound behavior:
+    DN42 zones are marked domain-insecure because DN42 is outside the normal
+    public DNSSEC hierarchy.
+
+    dn42. is marked private-domain because valid DN42 answers can contain
+    RFC1918/ULA addresses.
+
+    DN42 IPv4 reverse zones and d.f.ip6.arpa. use:
+        local-zone: "...zone..." nodefault
+
+    This overrides Unbound's normal private empty-zone handling so those PTR
+    requests can be forwarded to DN42 DNS.
+
+Pi-hole behavior:
+    dns.bogusPriv = false
+
+    Verified 2026-09-25.
+
+    This is intentional. Pi-hole's private-reverse NXDOMAIN behavior must be
+    disabled so unknown private PTR lookups can reach Unbound and the DN42
+    reverse forwarders.
+
+Verified 2026-09-25:
+    dn42. SOA:
+        resolves through Unbound and through the Pi-hole -> Unbound path
+
+    20.172.in-addr.arpa. SOA:
+        resolves through the DN42 resolver path
+
+    d.f.ip6.arpa. SOA:
+        resolves through the DN42 resolver path
+
+    PTR query for:
+        172.20.220.49
+
+    reaches DN42 DNS and currently returns authoritative DN42 NXDOMAIN because
+    no PTR is published for that address.
+
+    PTR query for:
+        fdf0:e12c:5528::1
+
+    likewise reaches DN42 DNS and currently returns authoritative DN42 NXDOMAIN.
+
+Important ULA reverse note:
+    d.f.ip6.arpa. represents fd00::/8 and therefore also includes local ULA
+    space such as:
+        fd42:42:42::/64
+
+    If local PTR records are wanted for the private WireGuard ULA range, define
+    a more-specific local reverse zone for that range so it wins over the broad
+    DN42 d.f.ip6.arpa. forward.
+
+Current dn42.conf shape:
+    one server: block
+    forward-zone for dn42.
+    four IPv4 reverse forward-zones
+    one d.f.ip6.arpa. forward-zone
+    all using the four DN42 anycast resolver addresses above
 
 ===============================================================================
-12. CLOUDFLARED
+13. CLOUDFLARED
 ===============================================================================
 
 Service:
@@ -628,21 +706,18 @@ Observed tunnel-backed service:
     matrix.kgivler.com
         -> http://127.0.0.1:8008
 
-Uptime Kuma and The Lounge have also been served through Molasses' Cloudflare
-Tunnel configuration.
+Uptime Kuma and The Lounge have also previously been served through Molasses'
+Cloudflare Tunnel configuration.
 
 IMPORTANT:
-    The exact startup token/credential mechanism has intentionally not been
-    dumped into this public document.
-
     Preserve whatever token/credential configuration is required for recovery,
-    but never commit live credentials to UsefulScripts.
+    but never commit live credentials into UsefulScripts or this public dossier.
 
 ===============================================================================
-13. LISTENING SERVICES
+14. LISTENING SERVICES
 ===============================================================================
 
-Important host listeners observed:
+Important host listeners previously observed:
 
 DNS:
     TCP/53
@@ -687,14 +762,14 @@ Uptime Kuma:
 Beszel agent:
     TCP/45876
 
-Other observed listeners requiring documentation:
+Other previously observed listeners still worth documenting:
     TCP/20211
         nginx
     TCP/20214
         python3
 
 ===============================================================================
-14. PERSISTENT APPLICATION DATA
+15. PERSISTENT APPLICATION DATA
 ===============================================================================
 
 Matrix identity/configuration backup set:
@@ -711,10 +786,12 @@ Matrix persistent data intentionally excluded:
 
 Pi-hole:
     /etc/pihole
-    Select configuration only; do not blindly preserve all history/cache data.
+    selected configuration/state
+    query-history DB intentionally excluded from the backup script
 
 Unbound:
     /etc/unbound
+    includes DN42 forward/reverse configuration
 
 WireGuard:
     /etc/wireguard
@@ -728,6 +805,7 @@ NetAlertX:
 Scrutiny:
     /opt/stacks/scrutiny/config
     /opt/stacks/scrutiny/influxdb
+    influx time-series history is excluded from the backup staging policy
 
 Beszel:
     /opt/stacks/beszel-agent/beszel_agent_data
@@ -739,144 +817,232 @@ Dockge:
 The Lounge:
     /var/lib/docker/volumes/loungedocker_thelounge-data/_data
 
+Custom local binaries/scripts:
+    /usr/local/bin
+    /usr/local/sbin
+
+Administrator SSH state included by backup:
+    /home/joyfulreaper/.ssh
+
 Custom systemd configuration:
     /etc/systemd/system
 
 Cloudflared:
     /etc/cloudflared
-    plus service configuration / credentials as deployed
 
 ===============================================================================
-15. KNOWN DATABASES / STATE STORES
+16. KNOWN DATABASES / STATE STORES
 ===============================================================================
 
 Matrix PostgreSQL:
-    Live data:
-        /opt/stacks/matrix/postgres
-
-    Current database size:
-        ~2699 MB
+    /opt/stacks/matrix/postgres
 
     Backup policy:
-        intentionally NOT backed up under the current minimal Matrix policy.
+        intentionally NOT backed up under the current minimal Matrix policy
 
 Pi-hole:
     /etc/pihole/pihole-FTL.db
-        query/history data
-        not P0
+        query/history
+        deliberately excluded
 
     /etc/pihole/gravity.db
-        useful but recreatable/replaceable depending on chosen Pi-hole policy
+        consistent SQLite snapshot is taken by the backup script
 
 Uptime Kuma:
     /opt/stacks/uptime-kuma/data/kuma.db
+    consistent SQLite snapshot is taken by the backup script
 
 NetAlertX:
     /opt/stacks/netalertx/data/db/app.db
+    consistent SQLite snapshot is taken by the backup script
 
 Scrutiny:
     /opt/stacks/scrutiny/config/scrutiny.db
-    /opt/stacks/scrutiny/influxdb/influxd.sqlite
+    consistent SQLite snapshot is taken by the backup script
+
+    /opt/stacks/scrutiny/influxdb/
+    excluded from backup as bulk/time-series history
 
 Dockge:
     /opt/dockge/data/dockge.db
+    consistent SQLite snapshot is taken by the backup script
 
 The Lounge:
-    persistent state in its Docker named volume
+    persistent state in Docker named volume
 
 ===============================================================================
-16. DOCKER NAMED VOLUMES
+17. DOCKER NAMED VOLUMES
 ===============================================================================
 
-Observed named volume:
+Known named volume:
 
 loungedocker_thelounge-data
-    Host path:
-        /var/lib/docker/volumes/loungedocker_thelounge-data/_data
+    /var/lib/docker/volumes/loungedocker_thelounge-data/_data
 
-No other named Docker volumes were observed.
-
-===============================================================================
-17. BACKUP ARCHITECTURE / POLICY
-===============================================================================
-
-Molasses backup design is intentionally split by data value rather than by
-directory size alone.
-
-A. TINY IRREPLACEABLE / IDENTITY / ACCESS MATERIAL
-
-    Examples:
-        Matrix signing key
-        Matrix .env / registration shared secret / homeserver config
-        WireGuard private configuration
-        important SSH/access material
-        Cloudflare credentials/configuration needed for recovery
-        backup repository credentials (stored separately/out-of-band as needed)
-
-    Policy:
-        - preserve automatically
-        - encrypted peer copy on a VPS where practical
-        - independent encrypted offsite object-storage copy
-
-    Rationale:
-        These files are tiny, critical, and have negligible storage impact.
-
-B. SMALL USEFUL APPLICATION STATE
-
-    Examples:
-        Uptime Kuma
-        selected NetAlertX state
-        selected Scrutiny state
-        selected Pi-hole configuration
-        Dockge/The Lounge state
-        custom systemd units and service configuration
-
-    Policy:
-        Back up where worthwhile.
-        Prefer object storage plus peer copy when size is tiny.
-        Do not preserve large history/cache data just because it exists.
-
-C. MATRIX BULK / DATABASE STATE
-
-    Current examples:
-        PostgreSQL database: ~2.7 GB
-        Synapse media store: ~601 MB
-
-    Policy:
-        DO NOT BACK UP under the current minimal Matrix recovery policy.
-
-    Reason:
-        The goal is to recover the homeserver identity/configuration, not to
-        archive Matrix state.
-
-D. REPRODUCIBLE CONFIGURATION
-
-    Examples:
-        compose.yaml files
-        selected systemd units/timers
-        Unbound configuration
-        non-secret service configuration
-        public infrastructure documentation
-
-    Policy:
-        Keep in Git where appropriate.
-        Small configuration may also be included in encrypted backups.
-
-E. REGENERATABLE / DO NOT BACK UP
-
-    /var/lib/docker
-    /var/lib/containerd
-    Docker images
-    container writable layers
-    build/cache state
-    package caches
-    downloaded Pi-hole list cache
-    Matrix PostgreSQL database under current policy
-    Matrix media under current policy
-    other obvious caches/history not deliberately preserved
+The backup script explicitly stages this volume's data.
 
 ===============================================================================
-18. BACKUP PRIORITY MODEL
+18. BACKUP ARCHITECTURE / POLICY
+===============================================================================
+
+Molasses backup is IMPLEMENTED.
+
+Backup script source in UsefulScripts:
+    VPS/Backup/Molasses/backup.sh
+
+Installed execution path expected by systemd:
+    /usr/local/sbin/vps-backup
+
+Staging:
+    /var/lib/vps-backup/staging
+
+Lock:
+    /run/lock/vps-backup.lock
+
+Backup destinations:
+
+1. Peer backup on Clanker
+    Repository:
+        rest:http://10.99.0.1:8000/molasses/
+
+    Tags:
+        molasses
+        peer
+
+2. Independent Backblaze B2 repository
+    Repository:
+        s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-molasses
+
+    Tags:
+        molasses
+        offsite
+        b2
+
+Notifications:
+    ntfy endpoint:
+        http://10.99.0.1:5197/vps-backups
+
+    Success and failure notifications are emitted when credentials are available.
+
+Backup prerequisites / secret files:
+    /etc/vps-backup/peer.env
+    /etc/vps-backup/peer-repository-password
+    /etc/vps-backup/b2.env
+    /etc/vps-backup/ntfy.env
+
+Do NOT commit the contents of those secret files.
+
+Backup process:
+    - verify Clanker restic repository connectivity
+    - verify B2 restic repository connectivity
+    - build a fresh staging tree
+    - stage /etc except backup credentials and Pi-hole history/cache
+    - stage /opt/stacks with intentional Matrix/Scrutiny bulk exclusions
+    - stage additional application/configuration paths
+    - replace live SQLite copies with consistent SQLite .backup snapshots
+    - run PRAGMA quick_check on each SQLite snapshot
+    - generate a recovery manifest
+    - send the same staged recovery set to Clanker
+    - send the same staged recovery set to Backblaze B2
+    - list recent snapshots
+    - notify success/failure
+
+The backup intentionally requires BOTH repositories to be reachable before the
+normal run proceeds.
+
+===============================================================================
+19. BACKUP CONTENT
+===============================================================================
+
+/etc:
+    staged broadly
+
+Explicit /etc exclusions:
+    /etc/vps-backup/
+    /etc/pihole/pihole-FTL.db
+    /etc/pihole/pihole-FTL.db-wal
+    /etc/pihole/pihole-FTL.db-shm
+    /etc/pihole/listsCache/
+
+/opt/stacks:
+    staged broadly
+
+Explicit stack exclusions:
+    /opt/stacks/matrix/postgres/
+    /opt/stacks/matrix/synapse/media_store/
+    /opt/stacks/scrutiny/influxdb/
+
+Additional staged paths:
+    /home/joyfulreaper/.ssh
+    /opt/dockge
+    /opt/pihole
+    /opt/netalertx
+    /var/lib/docker/volumes/loungedocker_thelounge-data/_data
+    /usr/local/bin
+    /usr/local/sbin
+
+Consistent SQLite snapshots:
+    Dockge
+    NetAlertX
+    Scrutiny
+    Uptime Kuma
+    Pi-hole gravity.db
+
+Recovery manifest includes:
+    host information
+    filesystem usage/types
+    block devices
+    IP addresses
+    IPv4 routes
+    IPv6 routes
+    WireGuard state
+    Docker containers
+    Docker Compose projects
+    Docker volumes
+    Docker networks
+    enabled systemd units
+    systemd timers
+    listening sockets
+    UFW status
+    installed Debian packages
+    root crontab
+    joyfulreaper crontab
+
+===============================================================================
+20. BACKUP MAINTENANCE
+===============================================================================
+
+Backblaze B2 maintenance script:
+    VPS/Backup/Molasses/b2-repo-maintenance.sh
+
+Installed execution path expected by systemd:
+    /usr/local/sbin/b2-backup-maintenance
+
+Schedule:
+    Sunday 08:45
+    randomized delay up to 15 minutes
+    persistent timer
+
+Operations:
+    restic cat config
+    restic unlock
+    restic forget --keep-within 30d --prune
+    restic check
+    restic stats --mode raw-data
+
+The same backup lock is used so repository maintenance cannot overlap the normal
+backup run.
+
+Current retention policy encoded in the script:
+    keep all snapshots within 30 days
+
+NOTE:
+    Current script/repository configuration is documented here.
+    Actual successful scheduled execution should still be periodically verified
+    from systemd logs, restic snapshots, and restore tests.
+
+===============================================================================
+21. BACKUP PRIORITY MODEL
 ===============================================================================
 
 P0 - irreplaceable identity / access / secrets:
@@ -886,34 +1052,38 @@ P0 - irreplaceable identity / access / secrets:
     WireGuard private configuration
     important SSH access material
     Cloudflare credentials required for service restoration
-    backup-repository credentials
+    backup repository credentials
 
 P1 - small useful mutable state:
-    Uptime Kuma state
+    Uptime Kuma
     selected Pi-hole configuration
-    selected NetAlertX/Scrutiny/Dockge/The Lounge state
-    other small application databases that are genuinely worth preserving
+    NetAlertX
+    Scrutiny configuration DB
+    Dockge
+    The Lounge
+    other deliberately selected small state
 
 P2 - useful/reproducible configuration:
-    /opt/stacks Compose configuration
-    /etc/unbound
+    /opt/stacks Compose files
+    /etc/unbound including DN42 DNS config
     custom systemd units/timers
-    recovery inventory / manifests
+    recovery manifests
     package/service manifests
 
 P3 - intentionally regenerate/lose:
     Matrix PostgreSQL database
     Matrix media store
-    Matrix history/account/room state
+    Matrix historical account/room/event state
+    Scrutiny InfluxDB history
+    Pi-hole query history
     /var/lib/docker
     /var/lib/containerd
     images/layers/cache
     downloaded caches
     package caches
-    expendable history data
 
 ===============================================================================
-19. RESTORE ORDER
+22. RESTORE ORDER
 ===============================================================================
 
 Suggested high-level rebuild order:
@@ -922,128 +1092,154 @@ Suggested high-level rebuild order:
 2. Restore administrator / SSH access.
 3. Restore network configuration.
 4. Restore WireGuard identity/configuration.
-5. Restore UFW/network policy.
-6. Install Docker / Docker Compose.
-7. Restore Compose/configuration files.
-8. Restore Pi-hole and Unbound configuration.
-9. Restore custom systemd units/timers.
-10. Restore Cloudflare Tunnel configuration/credentials.
-11. Recreate PostgreSQL as a new empty Matrix database.
-12. Restore Matrix P0 files:
-        compose.yaml
-        .env
-        homeserver.yaml
-        log config
-        kgivler.com.signing.key
-        registration_shared_secret
-13. Start the fresh Matrix deployment.
-14. Verify matrix.kgivler.com client/federation APIs.
-15. Verify kgivler.com Matrix .well-known delegation.
-16. Recreate local Matrix users/services as needed.
-17. Rejoin/rebuild room memberships/state as needed.
-18. Restore selected Uptime Kuma / NetAlertX / Scrutiny / Dockge / The Lounge
-    state.
-19. Validate Pi-hole -> Unbound DNS flow.
-20. Enable and test scheduled backup jobs.
-21. Perform a representative encrypted peer restore.
-22. Perform a representative offsite-object-storage restore.
+5. Verify Clanker peer connectivity.
+6. Restore DN42 client addresses/routes through Clanker.
+7. Restore UFW/network policy.
+8. Install Docker / Docker Compose.
+9. Restore Compose/configuration files.
+10. Restore Pi-hole and Unbound.
+11. Restore /etc/unbound/unbound.conf.d/dn42.conf.
+12. Restore Pi-hole dns.bogusPriv=false.
+13. Verify normal DNS.
+14. Verify .dn42 forward DNS.
+15. Verify DN42 IPv4 reverse DNS.
+16. Verify DN42 IPv6 reverse DNS.
+17. Restore custom systemd units/timers.
+18. Restore Cloudflare Tunnel configuration/credentials.
+19. Recreate PostgreSQL as a new empty Matrix database.
+20. Restore Matrix P0 files.
+21. Start the fresh Matrix deployment.
+22. Verify matrix.kgivler.com client/federation APIs.
+23. Verify kgivler.com Matrix .well-known delegation.
+24. Recreate local Matrix users/services as needed.
+25. Restore selected application SQLite/state.
+26. Install/restore Molasses backup scripts and secret files out-of-band.
+27. Verify Clanker peer repository access.
+28. Verify B2 repository access.
+29. Run a manual backup.
+30. Perform representative restores from BOTH destinations.
+31. Enable backup and maintenance timers.
 
 ===============================================================================
-20. CURRENT HIGH-LEVEL SERVICE MAP
+23. CURRENT HIGH-LEVEL SERVICE MAP
 ===============================================================================
 
 Home LAN / Internet
         |
         +-- wifi0
         |     192.168.1.5
-        |     public IPv6
+        |     native public IPv6
         |
      Molasses
         |
         +-- Pi-hole
-        |     DNS 53
-        |     web 80/443
+        |     DNS :53
+        |     web :80/:443
         |        |
         |        +-- Unbound
         |              127.0.0.1:5335
+        |              |
+        |              +-- public recursive DNS
+        |              |
+        |              +-- DN42 forward/reverse zones
+        |                    |
+        |                    +-- DN42 anycast resolvers
+        |                          via wg0 / Clanker
         |
         +-- wg0
         |     10.99.0.10
         |     fd42:42:42::10
+        |     172.20.220.59
+        |     fdf0:e12c:5528::59
         |        |
-        |        +-- Clanker / ScopeCreep / homelab WireGuard network
+        |        +-- Clanker
+        |              |
+        |              +-- WireGuard/private infrastructure
+        |              +-- DN42 routing/BGP
         |
         +-- Cloudflare Tunnel
         |        |
         |        +-- matrix.kgivler.com
-        |        |      -> 127.0.0.1:8008
-        |        |
-        |        +-- other local web services
+        |              -> 127.0.0.1:8008
         |
         +-- Docker
+        |     192.168.63.0/24 through 192.168.70.0/24
+        |        |
+        |        +-- Matrix Synapse
+        |        +-- PostgreSQL
+        |        +-- NetAlertX
+        |        +-- PairDrop
+        |        +-- Uptime Kuma
+        |        +-- Scrutiny
+        |        +-- The Lounge
+        |        +-- Beszel agent
+        |        +-- Dozzle agent
+        |        +-- Dockge
+        |
+        +-- Backup client
               |
-              +-- Matrix Synapse
-              +-- PostgreSQL
-              +-- NetAlertX
-              +-- PairDrop
-              +-- Uptime Kuma
-              +-- Scrutiny
-              +-- The Lounge
-              +-- Beszel agent
-              +-- Dozzle agent
-              +-- Dockge
+              +-- Clanker rest-server
+              |     10.99.0.1:8000/molasses/
+              |
+              +-- Backblaze B2
+                    kgivler-backup-molasses
 
 ===============================================================================
-21. INVENTORY GAPS / NEXT ACTIONS
+24. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
 Still worth checking later:
 
-1. Choose the object-storage provider/bucket for Molasses backups.
+1. Decide the intended role of /dev/sdb.
 
-2. Implement the Molasses backup script using the minimal Matrix policy in this
-   document.
+2. Verify PairDrop TCP/3000 exposure from outside the LAN/WireGuard network.
 
-3. Inventory the exact useful Pi-hole configuration/state files and avoid
-   treating pihole-FTL.db query-history data as mandatory recovery state.
-
-4. Inventory cloudflared safely without exposing its tunnel token or credentials.
-
-5. Identify/document:
+3. Identify/document:
        TCP/20211  (nginx)
        TCP/20214  (python3)
 
-6. Verify PairDrop TCP/3000 exposure from outside the LAN/WireGuard network.
+4. Decide whether the older Clanker-routed public IPv6 /128
+       2607:f2d8:8416:10c1::10/128
+   is still useful now that Molasses has native ISP IPv6.
 
-7. Decide the intended role of /dev/sdb.
+5. Decide whether to publish PTR records for Molasses' DN42 addresses:
+       172.20.220.59
+       fdf0:e12c:5528::59
 
-8. If Molasses ever participates in DN42, migrate Docker away from
-   172.20.0.0/14 first.
+6. If local PTR records are desired for fd42:42:42::/64, add a more-specific
+   local reverse zone so those private WireGuard PTR queries do not fall through
+   to DN42's broad d.f.ip6.arpa. forward.
 
-9. Decide which non-Matrix application databases are worth consistent snapshots:
-       Uptime Kuma
-       NetAlertX
-       Scrutiny
-       Dockge
-       Pi-hole
-       The Lounge
+7. Periodically verify DN42 DNS still works through both:
+       Unbound directly on :5335
+       normal Pi-hole path on :53
 
-10. Create and test the first encrypted peer backup of P0/small state.
+8. Verify the first/next unattended scheduled Molasses backup and B2 maintenance
+   runs from actual systemd/restic logs.
 
-11. Create and test the first independent object-storage backup.
+9. Perform representative clean restore tests from:
+       Clanker peer repository
+       Backblaze B2
 
-12. Perform clean restore tests from both destinations.
+10. Keep the Docker address pools outside 172.20.0.0/14 while Molasses receives
+    DN42 routing.
+
+11. Keep this dossier synchronized when DNS, DN42 addressing, backup policy, or
+    major service roles change.
 
 ===============================================================================
-22. SUMMARY
+25. SUMMARY
 ===============================================================================
 
-Molasses is an old but currently healthy Dell Inspiron 3847 home server running
-Debian 13 on a 1 TB mechanical HDD.
+Molasses is an always-on Debian 13 home server on older Dell hardware with a
+large local HDD.
 
 Its current responsibilities include:
     - Pi-hole
     - Unbound
+    - DN42 forward DNS
+    - DN42 IPv4/IPv6 reverse DNS
+    - DN42 client connectivity through Clanker
     - Matrix Synapse + PostgreSQL
     - Cloudflare Tunnel
     - WireGuard
@@ -1055,26 +1251,46 @@ Its current responsibilities include:
     - Dockge
     - Dozzle agent
     - Beszel agent
+    - automated encrypted backup to Clanker
+    - automated encrypted offsite backup to Backblaze B2
+
+Important recent changes:
+    - Molasses now has dedicated DN42 client addresses:
+          172.20.220.59
+          fdf0:e12c:5528::59
+
+    - DN42 routes are provided by Clanker over wg0.
+
+    - Docker networks were moved away from DN42's 172.20.0.0/14 space into
+      192.168.63.0/24 through 192.168.70.0/24.
+
+    - Pi-hole + Unbound now resolve .dn42 and DN42 reverse DNS.
+
+    - Pi-hole dns.bogusPriv is intentionally false so DN42 PTR lookups can reach
+      Unbound.
+
+    - Molasses backups are implemented to both Clanker and Backblaze B2.
 
 The mechanical HDD is not itself the problem; allowing it to hold the only copy
 of irreplaceable identity/configuration material would be.
 
-The intended backup model is:
-
+The current recovery model is:
     tiny irreplaceable identity/secrets
         -> encrypted peer copy + independent encrypted offsite copy
 
     small useful application state
-        -> preserve selectively where worthwhile
+        -> consistent snapshots/selective preservation
 
     Matrix PostgreSQL + media
         -> intentionally NOT backed up under the current minimal-recovery policy
 
     reproducible configuration
-        -> Git where appropriate + cheap encrypted backup where useful
+        -> Git where appropriate + encrypted backup
 
     Docker/runtime/cache data
-        -> recreate instead
+        -> recreate
 
 For Matrix specifically, the backup objective is to retain the kgivler.com
-homeserver identity and configuration, not to preserve historical Matrix state.
+homeserver identity and deployment configuration, not historical Matrix state.
+
+END

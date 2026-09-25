@@ -505,6 +505,9 @@ services:
       EventSources__Sources__15__Name: missioncontrol-agent-scopecreep
       EventSources__Sources__15__ApiKey: ${SCOPECREEP_AGENT_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__16__Name: missioncontrol-agent-molasses
+      EventSources__Sources__16__ApiKey: ${MISSIONCONTROL_AGENT_MOLASSES_KEY}
+
     depends_on:
       - nats
 

@@ -1,13 +1,13 @@
 CLANKER
 =======
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-21
+Snapshot date: 2026-09-25
 
 PURPOSE
 -------
-Clanker is Kyle's primary always-on Ubuntu VPS and currently acts as a mixed
-application host, protocol server, VPN/router, observability node, overlay-network
-node, and DN42 router-in-preparation.
+Clanker is Kyle's primary always-on Ubuntu VPS. It currently acts as a mixed
+application host, protocol server, VPN/router, observability node, Yggdrasil
+overlay node, DN42 router, reverse-proxy host, and backup peer/storage node.
 
 This file is intended to answer:
 - What is Clanker?
@@ -15,10 +15,11 @@ This file is intended to answer:
 - What starts it?
 - Where is its configuration?
 - Where is persistent data?
-- Which secrets matter?
-- What network does it participate in?
+- Which secrets and identities matter for recovery?
+- What networks does it participate in?
+- What backup responsibilities does it have?
 - What would be needed to rebuild it?
-- What have we NOT inventoried yet?
+- What remains worth documenting or cleaning up?
 
 It is deliberately broader than a backup manifest.
 
@@ -31,30 +32,60 @@ Hostname:
 
 Platform:
     Ubuntu 26.04.1 LTS
-    Kernel: Linux 7.0.0-31-generic
+    Kernel: Linux 7.0.0-34-generic
     Architecture: x86_64
     Virtualization: KVM / QEMU
 
+Observed virtual hardware:
+    Vendor: QEMU
+    Model: Standard PC (i440FX + PIIX)
+
 Storage:
-    Root filesystem: /dev/vda1
-    Size: ~33 GB
-    Used at inventory time: ~21 GB
-    Free at inventory time: ~12 GB
-    Filesystem: ext4
+    Root filesystem:
+        /dev/vda1
+        ext4
+        ~33 GB
+        ~17 GB used
+        ~16 GB available
+        ~52% used at 2026-09-25 inventory
 
-    Disk-usage note:
-        Approximately 14 GB is currently occupied by /var/lib/containerd.
+    /boot:
+        /dev/vda13
+        ext4
+        ~989 MB
+        ~150 MB used
 
-        The majority is regeneratable Docker/BuildKit state:
-            ~12 GB containerd overlayfs snapshots
-            ~2.3 GB containerd content blobs
-            ~11.06 GB Docker build cache reported by docker system df -v
+    /boot/efi:
+        /dev/vda15
+        vfat
+        ~105 MB
+        ~6.3 MB used
 
-        This state should not be included in normal Clanker backups.
+Docker disk use at 2026-09-25 inventory:
+    Images:
+        28 total
+        24 active
+        ~5.8 GB
+        ~1.8 GB reclaimable
 
-Boot:
-    /boot      ~989 MB ext4
-    /boot/efi  ~105 MB vfat
+    Containers:
+        25 active
+        negligible writable-layer size
+
+    Local volumes:
+        10 total
+        6 active
+        ~94 MB
+
+    Build cache:
+        72 entries
+        ~6.3 GB
+        ~2.2 GB reclaimable
+
+Policy:
+    Docker images, layers, BuildKit cache, containerd cache, package caches and
+    similar runtime/build state are regeneratable and should not be treated as
+    primary backup data.
 
 Primary service managers:
     - systemd
@@ -63,12 +94,21 @@ Primary service managers:
 Primary administrator account:
     joyfulreaper
 
+System health at inventory:
+    0 failed systemd units.
+
 ===============================================================================
 2. IMPORTANT NETWORK IDENTITIES
 ===============================================================================
 
+Primary public interface:
+    ens3
+
 Public IPv4:
-    142.4.38.224
+    142.4.38.224/24
+
+Public IPv4 gateway:
+    142.4.38.1
 
 Public IPv6 addresses observed on ens3:
     2607:f2d8:8416:10c1::bad:1dea/128
@@ -79,216 +119,490 @@ Public IPv6 addresses observed on ens3:
 Public IPv6 gateway:
     2607:f2d8:8416::1
 
-WireGuard:
-    Interface: wg0
-    IPv4: 10.99.0.1/24
-    IPv6: fd42:42:42::1/64
-    Config: /etc/wireguard/wg0.conf
+Primary WireGuard / homelab VPN:
+    Interface:
+        wg0
 
-Yggdrasil:
-    Interface: tun0
-    Address:
-        201:762f:80bd:20e1:20db:1239:19af:f25e/7
+    IPv4:
+        10.99.0.1/24
+
+    IPv6:
+        fd42:42:42::1/64
+
     Config:
-        /etc/yggdrasil/yggdrasil.conf
-    Listener observed:
-        TCP/54321
-        UDP/9001
-    Route:
-        200::/7 via tun0
+        /etc/wireguard/wg0.conf
 
-DN42:
-    Registry PR pending at snapshot time.
+    Public listening port:
+        UDP/51820
 
+DN42 local interface:
+    dn42-dummy
+
+DN42 IPv4:
+    172.20.220.49/28
+
+DN42 IPv6:
+    fdf0:e12c:5528::1/48
+
+Yggdrasil interface:
+    tun0
+
+Yggdrasil node IPv6:
+    201:762f:80bd:20e1:20db:1239:19af:f25e
+
+Yggdrasil routed subnet:
+    301:762f:80bd:20e1::/64
+
+Additional Yggdrasil service addresses observed:
+    301:762f:80bd:20e1::10/128
+    301:762f:80bd:20e1::20/128
+    301:762f:80bd:20e1::30/128
+    301:762f:80bd:20e1::40/128
+    301:762f:80bd:20e1::50/128
+    301:762f:80bd:20e1::60/128
+
+===============================================================================
+3. ROUTING / FIREWALL
+===============================================================================
+
+IPv4 forwarding:
+    enabled
+
+IPv6 forwarding:
+    enabled
+
+Important routing/configuration areas:
+    /etc/sysctl.conf
+    /etc/sysctl.d/
+    /etc/netplan/
+    /etc/systemd/network/
+    /etc/wireguard/
+    /etc/bird/
+
+UFW:
+    enabled
+
+Default policy:
+    incoming: deny
+    outgoing: allow
+    routed: deny
+
+Publicly exposed services intentionally include a mixture of:
+    old RFC protocol services
+    Gemini
+    Gopher
+    WireGuard
+    Yggdrasil transport
+    DN42 WireGuard transport
+    TCPNoise listener/bait ports
+
+SSH is restricted to the WireGuard address ranges rather than being generally
+open to the public Internet.
+
+DN42-specific public UDP ports currently include:
+    42425/udp
+        RoutedBits tunnel
+
+    21732/udp
+        Baragoon tunnel
+
+    21733/udp
+        HEADSCARF175 tunnel
+
+Important DN42 firewall lesson:
+    A working WireGuard handshake does NOT prove BGP can establish.
+
+    RoutedBits and Baragoon initially worked because Clanker initiated their TCP
+    BGP sessions and the replies matched ESTABLISHED/RELATED state.
+
+    HEADSCARF175 initiated TCP/179 toward Clanker. UFW's default deny policy
+    silently dropped those new inbound SYNs until an interface-specific BGP rule
+    was added for wg-dn42-hs1.
+
+    Prefer interface-specific TCP/179 rules for DN42 peer interfaces rather than
+    opening BGP globally.
+
+Docker forwarding/address-space note:
+    Docker was moved away from DN42 address space after automatic bridge networks
+    occupied parts of 172.20.0.0/14.
+
+    Current automatic Docker address-pool strategy uses:
+        192.168.128.0/18
+        /24 per network
+
+    Some older explicitly-created networks still exist outside that pool:
+        dozzle_default    172.18.0.0/16
+        smolsearch        172.19.0.0/16
+        dockge_default    172.24.0.0/16
+
+    DN42's 172.20.0.0/14 is currently clear of Docker bridge routes on Clanker.
+
+===============================================================================
+4. DN42
+===============================================================================
+
+Clanker is an active DN42 router.
+
+Registry identity:
     ASN:
         AS4242420425
 
     IPv4 allocation:
         172.20.220.48/28
 
-    Clanker DN42 IPv4:
-        172.20.220.49/28
+    Router IPv4:
+        172.20.220.49
 
     IPv6 allocation:
         fdf0:e12c:5528::/48
 
-    Clanker DN42 IPv6:
-        fdf0:e12c:5528::1/48
+    Router IPv6:
+        fdf0:e12c:5528::1
 
-    Interface:
-        dn42-dummy
+Local interface:
+    dn42-dummy
 
-    systemd unit:
-        /etc/systemd/system/dn42-dummy.service
+systemd unit:
+    /etc/systemd/system/dn42-dummy.service
 
-    Routing daemon:
-        BIRD 2.18
+Routing daemon:
+    BIRD 2.18
 
-    BIRD config:
-        /etc/bird/bird.conf
-        /etc/bird/peers/
+BIRD config:
+    /etc/bird/bird.conf
+    /etc/bird/peers/
 
-    BGP peers:
-        none yet at snapshot time
+Current BGP peers at 2026-09-25 inventory:
 
-    BIRD currently provides:
-        device protocol
-        kernel IPv4
-        kernel IPv6
-        static IPv4
-        static IPv6
+1. RoutedBits EWR / Newark
+    ASN:
+        AS4242420207
 
-    Known harmless warning:
-        BIRD periodically logs:
-            KRT: Received route ::/0 with strange next-hop 2607:f2d8:8416::1
+    BIRD protocol:
+        routedbits_ewr1
 
-        This relates to the VPS provider's IPv6 default-route arrangement.
+    WireGuard interface:
+        wg-dn42-ewr1
+
+    Local WireGuard UDP port:
+        42425
+
+    BGP transport:
+        IPv6 link-local
+
+    Local BGP link-local:
+        fe80::425
+
+    Neighbor BGP link-local:
+        fe80::207
+
+    Session:
+        Established
+
+    Capabilities include:
+        IPv4
+        IPv6
+        MP-BGP
+        extended next-hop
+
+2. Baragoon NY
+    ASN:
+        AS4242421732
+
+    BIRD protocol:
+        baragoon_ny1
+
+    WireGuard interface:
+        wg-dn42-ny1
+
+    Local WireGuard UDP port:
+        21732
+
+    Public peer endpoint observed:
+        172.82.22.156:20425
+
+    BGP transport:
+        IPv6 link-local
+
+    Local BGP link-local:
+        fe80::425
+
+    Neighbor BGP link-local:
+        fe80::1732
+
+    Session:
+        Established
+
+3. HEADSCARF175 us-ewr01 / Piscataway
+    ASN:
+        AS4242420842
+
+    BIRD protocol:
+        headscarf_ewr1
+
+    WireGuard interface:
+        wg-dn42-hs1
+
+    Local WireGuard UDP port:
+        21733
+
+    Public peer endpoint:
+        us-ewr01.headscarf175.net:20425
+
+    BGP transport:
+        IPv6 link-local
+
+    Local BGP link-local:
+        fe80:842::2:4fc9
+
+    Neighbor BGP link-local:
+        fe80:842::1:4fc9
+
+    Relationship:
+        Clanker / AS4242420425: customer
+        HEADSCARF175: provider
+
+    Session:
+        Established
+
+    Capabilities include:
+        IPv4
+        IPv6
+        MP-BGP
+        extended next-hop
+        BGP role negotiation
+
+Routing policy:
+    Clanker currently behaves as a stub DN42 AS.
+
+    It accepts valid DN42 routes from peers but exports only its own registered
+    prefixes:
+
+        172.20.220.48/28
+        fdf0:e12c:5528::/48
+
+    This was verified against all three peers at the 2026-09-25 inventory.
+
+    Clanker is NOT currently offering general DN42 transit between peers.
+
+    Transit is a deliberate future decision and should consider:
+        route-leak risk
+        peer policy
+        local preference
+        failure behavior
+        monitoring
+        bandwidth / VPS transfer limits
+        whether carrying third-party DN42 traffic is desirable
+
+ROA validation:
+    BIRD contains dedicated DN42 ROA tables:
+
+        roa4 table dn42_roa
+        roa6 table dn42_roa_v6
+
+    Generated files:
+        /etc/bird/roa_dn42.conf
+        /etc/bird/roa_dn42_v6.conf
+
+    Update helper:
+        /usr/local/sbin/update-dn42-roa
+
+    Repository copy:
+        /home/joyfulreaper/UsefulScripts/VPS/Clanker/update-dn42-roa.sh
+
+    The updater:
+        - downloads current generated IPv4/IPv6 DN42 ROA tables
+        - performs a route-count sanity check
+        - compares new tables byte-for-byte with current copies
+        - skips BIRD reload when both are unchanged
+        - validates BIRD configuration before applying changed tables
+        - restores previous files if validation/reload fails
+
+    Origin validation is enforced on imported DN42 routes.
+
+    NOTE:
+        ROA validation verifies the authorized route origin. It does not validate
+        every ASN in the complete AS path and does not prevent every possible
+        route leak or policy mistake.
+
+Useful checks:
+    sudo birdc show protocols
+    sudo birdc show protocols all <peer>
+    sudo birdc show route protocol <peer> count
+    sudo birdc show route export <peer>
+    sudo birdc show route all for <DN42-address>
+    sudo wg show
+
+Troubleshooting checks:
+    ip -6 addr show dev <peer-interface>
+    ip -6 route show dev <peer-interface>
+    sudo ss -tnp | grep ':179'
+    sudo ss -ltnp | grep ':179'
+    sudo tcpdump -ni <peer-interface> -vv 'icmp6 or tcp port 179'
+    sudo ufw status verbose
 
 ===============================================================================
-3. ROUTING / FORWARDING
+5. YGGDRASIL
 ===============================================================================
 
-IPv4 forwarding:
-    enabled
-    net.ipv4.ip_forward = 1
+Yggdrasil version:
+    0.5.14
 
-IPv6 forwarding:
-    enabled
-    net.ipv6.conf.all.forwarding = 1
+Interface:
+    tun0
 
-Important routing-related config observed:
-    /etc/sysctl.d/99-cloudimg-ipv6.conf
-    /etc/sysctl.d/99-proxy-ndp.conf
-    /etc/sysctl.d/99-clanker-ipv6-router.conf
-    /etc/sysctl.conf
+Node IPv6:
+    201:762f:80bd:20e1:20db:1239:19af:f25e
 
-Firewall:
-    UFW enabled.
+Routed subnet:
+    301:762f:80bd:20e1::/64
 
-    Default policy:
-        incoming: deny
-        outgoing: allow
-        routed: deny
+Routing table size at inventory:
+    8
 
-    Publicly allowed services include the old RFC services, Gemini, WireGuard,
-    Yggdrasil, and the intentionally exposed TCPNoise listener ports.
+Current outbound peers observed:
 
-    SSH is firewall-restricted to the WireGuard address ranges rather than being
-    generally exposed to the public Internet.
+    tls://marisa.nadeko.net:44442
+        Up
+        ~2.9 ms RTT
 
-Important UFW files:
-    /etc/ufw/ufw.conf
-    /etc/ufw/sysctl.conf
-    /etc/ufw/user.rules
-    /etc/ufw/user6.rules
-    /etc/ufw/before.rules
-    /etc/ufw/before6.rules
-    /etc/ufw/after.rules
-    /etc/ufw/after6.rules
+    tls://longseason.1200bps.xyz:13122
+        Up
+        ~3.0 ms RTT
 
-Other firewall-related file:
-    /etc/nftables.conf
+    tls://ygg-pa.incognet.io:8884
+        Up
+        ~5.2 ms RTT
 
-The effective UFW and nftables rules were captured privately on 2026-09-21.
-They are intentionally not reproduced in this public dossier.
+    tls://ygg4.mk16.de:1338
+        Up
+        ~8.8 ms RTT
+
+Configured but down:
+    tls://ygg-dc.lxak.net:8880
+        connection refused at inventory time
+        candidate for removal if it remains persistently unavailable
+
+Inbound peer observed:
+    tls://72.72.164.63:<ephemeral-port>
+        Up
+        ~10 ms RTT
+
+Yggdrasil service addressing observed:
+    301:762f:80bd:20e1::10
+        Ygg landing service
+
+    301:762f:80bd:20e1::60
+        HappyGopher Yggdrasil binding
+
+Other addresses in the routed /64 are also assigned for overlay services.
+
+Yggdrasil listens publicly for peers on:
+    TCP/54321
+    UDP/9001
+
+Yggdrasil is an overlay network and may forward overlay transit traffic between
+peers. It is not, by itself, a clearnet exit.
 
 ===============================================================================
-4. DOCKER
+6. DOCKER
 ===============================================================================
 
-Docker is enabled and running.
+Docker Engine and containerd are enabled and running.
 
 Docker daemon config:
     /etc/docker/daemon.json
 
-Build/cache state:
-    docker system df -v reported ~11.06 GB of build cache.
-    containerd uses ~14 GB total, dominated by overlayfs snapshots (~12 GB) and
-    content blobs (~2.3 GB).
+Current default address pool:
+    base:
+        192.168.128.0/18
 
-    This is regeneratable build/image state and is excluded from backup-critical
-    data.
+    per-network size:
+        /24
 
-Current default address-pool strategy:
-    Docker was moved away from DN42 address space.
+Observed bridge networks at 2026-09-25 inventory include:
+    docker0               192.168.128.0/24
+    beszel_default        192.168.129.0/24
+    it-tools_default      192.168.130.0/24
+    joyful-stack_backend  192.168.140.0/24
+                          fd66:3d9a:75a9::/64
+    joyful-stack_default  192.168.141.0/24
+    dozzle_default        172.18.0.0/16
+    smolsearch            172.19.0.0/16
+    dockge_default        172.24.0.0/16
 
-    New automatic pool:
-        base: 192.168.128.0/18
-        per-network size: /24
-
-Reason:
-    Docker had automatically occupied:
-        172.20.0.0/16
-        172.21.0.0/16
-        172.22.0.0/16
-        172.23.0.0/16
-
-    This overlapped DN42's 172.20.0.0/14 space.
-
-Current observed Docker networks:
-    bridge                  192.168.128.0/24
-    beszel_default          192.168.129.0/24
-    it-tools_default        192.168.130.0/24
-    joyful-stack_backend    192.168.140.0/24
-                             fd66:3d9a:75a9::/64
-    joyful-stack_default    192.168.141.0/24
-    dozzle_default          172.18.0.0/16
-    smolsearch              172.19.0.0/16
-    dockge_default          172.24.0.0/16
-
-DN42 range status:
-    172.20.0.0/14 was confirmed clear of Docker routes after migration.
+Docker runtime/cache is regeneratable and should not be backed up wholesale:
+    /var/lib/docker
+    /var/lib/containerd
+    images/layers/cache
+    BuildKit cache
 
 ===============================================================================
-5. DOCKER COMPOSE PROJECTS
+7. DOCKER COMPOSE PROJECTS
 ===============================================================================
 
 Current Compose projects:
 
 1. joyful-stack
-   Config:
-       /opt/joyful-stack/compose.yml
-   Containers/services:
-       18
+    Status:
+        running(18)
+
+    Live Compose files reported by Docker:
+        /opt/stacks/joyful-stack/compose.yml
+        /opt/joyful-stack/compose.yml
 
 2. beszel
-   Config:
-       /opt/stacks/beszel/compose.yaml
-   Environment:
-       /opt/stacks/beszel/.env
-   Containers:
-       beszel
-       beszel-agent
+    Status:
+        running(2)
+
+    Config:
+        /opt/stacks/beszel/compose.yaml
 
 3. dockge
-   Config:
-       /opt/dockge/compose.yml
+    Status:
+        running(1)
+
+    Config:
+        /opt/dockge/compose.yml
 
 4. dozzle
-   Config:
-       /opt/stacks/dozzle/compose.yaml
+    Status:
+        running(1)
+
+    Config:
+        /opt/stacks/dozzle/compose.yaml
 
 5. it-tools
-   Config:
-       /opt/stacks/it-tools/compose.yaml
+    Status:
+        running(1)
 
-6. smolsearch
-   Config:
-       /opt/joyful-stack/SmolSearch/compose.server.yml
+    Config:
+        /opt/stacks/it-tools/compose.yaml
 
-A deployment-specific .env was also found:
-    /opt/stacks/joyful-stack/.env
+6. rest-server-clanker
+    Status:
+        running(1)
 
-NOTE:
-    /opt/joyful-stack/compose.yml is the live joyful-stack compose file observed by
-    Docker Compose at inventory time.
+    Config:
+        /opt/stacks/rest-server-clanker/compose.yaml
+
+7. smolsearch
+    Status:
+        running(1)
+
+    Config:
+        /opt/joyful-stack/SmolSearch/compose.server.yml
+
+Deployment-specific environment/configuration files must be treated according to
+whether they contain secrets. Do not commit secret-bearing .env files publicly.
 
 ===============================================================================
-6. JOYFUL-STACK SERVICES
+8. JOYFUL-STACK SERVICES
 ===============================================================================
 
-Observed joyful-stack containers/services:
+Observed joyful-stack services:
 
+Protocol / smolnet services:
     happyecho
     happydiscard
     happydaytime
@@ -296,188 +610,202 @@ Observed joyful-stack containers/services:
     happyfinger
     happygopher
     happygopher-ygg
-    happygopher-mystery
     happygemini
 
+Applications:
+    randomsteam
+    randomgithub
+    wsiwot
+
+Mission Control:
     gateway
     dashboard
     archive
     gitactivity
 
-    randomsteam
-    randomgithub
-    wsiwot
-
+Infrastructure:
     nats
     ntfy
 
-Important exposed/bound ports include:
+Important bindings observed:
 
-    HappyEcho:
-        TCP/7
+HappyEcho:
+    TCP/7
 
-    HappyDiscard:
-        TCP/9
-        UDP/9
+HappyDiscard:
+    TCP/9
+    UDP/9
 
-    HappyDaytime:
-        TCP/13
-        UDP/13
+HappyDaytime:
+    TCP/13
+    UDP/13
 
-    HappyQOTD:
-        TCP/17
-        UDP/17
-        internal/local service endpoint observed on 127.0.0.1:5193
+HappyQOTD:
+    TCP/17
+    UDP/17
 
-    HappyFinger:
-        TCP/79
+HappyFinger:
+    TCP/79
 
-    HappyGopher:
-        TCP/70
-        public IPv4 binding on 142.4.38.224:70
-        public IPv6 binding on 2607:f2d8:8416:10c1::a:70
-        localhost binding on 127.0.0.1:70
+HappyGopher:
+    127.0.0.1:70
+    142.4.38.224:70
+    [2607:f2d8:8416:10c1::a]:70
 
-    HappyGopher Yggdrasil:
-        Yggdrasil address TCP/70
+HappyGopher Yggdrasil:
+    [301:762f:80bd:20e1::60]:70
 
-    HappyGemini:
-        TCP/1965
+HappyGemini:
+    TCP/1965
 
-    Mission Control Gateway:
-        127.0.0.1:5190
-        10.99.0.1:5190
+Mission Control Gateway:
+    127.0.0.1:5190
+    10.99.0.1:5190
 
-    Mission Control Archive:
-        127.0.0.1:5191
-        10.99.0.1:5191
+Mission Control Archive:
+    127.0.0.1:5191
+    10.99.0.1:5191
 
-    GitActivity:
-        127.0.0.1:5192
+GitActivity:
+    127.0.0.1:5192
 
-    Dashboard:
-        127.0.0.1:5195
+Dashboard:
+    127.0.0.1:5195
 
-    ntfy:
-        127.0.0.1:5197
+WSIWOT:
+    127.0.0.1:5080
 
-    WSIWOT:
-        127.0.0.1:5080
+ntfy:
+    127.0.0.1:5197
+    10.99.0.1:5197
 
-    NATS:
-        10.99.0.1:4222
-        10.99.0.1:8222
-        internal cluster port 6222
+NATS:
+    10.99.0.1:4222
+    10.99.0.1:8222
+    internal cluster port 6222
+
+Most application containers were healthy at the 2026-09-25 inventory.
 
 ===============================================================================
-7. OTHER DOCKER SERVICES
+9. OTHER DOCKER SERVICES
 ===============================================================================
+
+rest-server:
+    Image:
+        restic/rest-server:latest
+
+    Binding:
+        10.99.0.1:8000
+
+    Purpose:
+        peer backup repository endpoint for other hosts
 
 Beszel:
-    Service UI:
+    UI previously observed on:
         127.0.0.1:8090
 
-IT Tools:
-    127.0.0.1:8089
-
 Dozzle:
-    10.99.0.1:8088
+    previously observed on:
+        10.99.0.1:8088
 
 Dockge:
-    10.99.0.1:5001
+    previously observed on:
+        10.99.0.1:5001
+
+IT Tools:
+    previously observed on:
+        127.0.0.1:8089
 
 SmolSearch:
-    127.0.0.1:55865
+    previously observed on:
+        127.0.0.1:55865
 
 ===============================================================================
-8. HOST-MANAGED SYSTEMD SERVICES
+10. HOST-MANAGED SYSTEMD SERVICES
 ===============================================================================
 
-Important running host services observed:
+Important running host services at 2026-09-25 inventory include:
 
     bird.service
         BIRD routing daemon
 
+    chrony.service
+        NTP
+
     cloudflared.service
         Cloudflare Tunnel client
 
-    docker.service
-        Docker Engine
-
     containerd.service
-        Container runtime
+
+    cron.service
+
+    docker.service
 
     missioncontrol-agent.service
-        Mission Control agent
+        Mission Control Agent
 
     nginx.service
-        Reverse proxy / web server
+        reverse proxy / web server
 
     ssh.service
         OpenSSH
 
-    vpn-landing.service
-        VPN landing page
+    systemd networking/resolver components
 
-    yggdrasil.service
-        Yggdrasil overlay network
-
-    ygglanding.service
-        Yggdrasil landing page
-
-    chrony.service
-        NTP
-
-    cron.service
-
-    systemd-networkd.service
-    systemd-resolved.service
-
-    rsyslog.service
-
-    ufw.service
-        enabled
-
-Custom/local systemd units observed under /etc/systemd/system:
-
-    cloudflared-update.service
-    cloudflared-update.timer
-    cloudflared.service
+Additional custom/local host-managed components known on Clanker include:
     dn42-dummy.service
+    molasses-watch.service
+    molasses-watch.timer
+    vpn-landing
+    ygglanding
+    Yggdrasil
+
+Live socket inventory confirms active Yggdrasil and ygglanding processes.
+
+Legacy/custom unit files historically observed:
     happyecho.service
     happyfinger.service
     happygopher.service
-    missioncontrol-agent.service
-    molasses-watch.service
-    molasses-watch.timer
     randomsteam.service
-    vpn-landing.service
-    ygglanding.service
+
+Because those applications now run in Docker, any retained host-managed unit files
+should be classified as:
+    obsolete
+    disabled fallback
+    or intentionally retained
 
 Health:
-    No failed systemd units were reported on 2026-09-21.
-
-NOTE:
-    happyecho.service, happyfinger.service, happygopher.service, and
-    randomsteam.service look like older host-managed unit files because those apps
-    currently run in Docker. They should be reviewed and classified as:
-        - obsolete
-        - disabled fallback
-        - intentionally retained
+    no failed systemd units at 2026-09-25 inventory.
 
 ===============================================================================
-9. SCHEDULED JOBS
+11. SCHEDULED JOBS
 ===============================================================================
 
-Custom timer:
-    molasses-watch.timer
-        runs approximately every minute
-        activates molasses-watch.service
+Important timers:
 
-System timers observed include:
-    certbot
+molasses-watch.timer:
+    runs approximately every minute
+
+vps-backup.timer:
+    daily Clanker backup
+    observed most recent run:
+        2026-09-25 03:33 EDT
+
+scopecreep-backup-maintenance.timer:
+    weekly maintenance for ScopeCreep repository hosted on Clanker
+
+molasses-backup-maintenance.timer:
+    weekly maintenance for Molasses repository hosted on Clanker
+
+b2-backup-maintenance.timer:
+    weekly maintenance for Clanker's Backblaze B2 repository
+
+certbot.timer:
+    certificate renewal
+
+Other normal system timers include:
     apt maintenance
-    package updates
+    dpkg database backup
     logrotate
     fstrim
     filesystem scrubs
@@ -486,63 +814,63 @@ System timers observed include:
     man-db
     fwupd
 
-Root crontab:
-    Weekly Docker builder prune:
-        Sunday at 04:00
-
-        /usr/bin/docker builder prune -af --filter "until=168h"
+Historical root cron:
+    weekly Docker builder prune
 
 User crontab:
-    none for joyfulreaper
+    previously observed empty for joyfulreaper
 
 ===============================================================================
-10. CLOUDFLARED
+12. CLOUDFLARED
 ===============================================================================
 
 Service:
     /etc/systemd/system/cloudflared.service
 
-Current startup style:
+Current/historical startup style:
     cloudflared tunnel run --token <token>
 
 IMPORTANT:
-    The Cloudflare Tunnel token is embedded directly in the systemd unit.
+    The Cloudflare Tunnel token is secret-bearing configuration.
 
 Classification:
     P0 SECRET
 
-Potential future cleanup:
-    Move the token into a root-owned 0600 EnvironmentFile, for example:
-        /etc/cloudflared/tunnel.env
+Do not commit the token to a public repository.
 
-and reference that from cloudflared.service.
-
-Do not commit this token to a public repository.
+Future cleanup worth considering:
+    move the tunnel token into a root-owned 0600 EnvironmentFile rather than
+    embedding it directly in a unit file, if that has not already been changed.
 
 ===============================================================================
-11. NGINX
+13. NGINX
 ===============================================================================
 
 Main config:
     /etc/nginx/nginx.conf
 
-Custom sites observed:
+Known Yggdrasil-oriented site configs:
     /etc/nginx/sites-available/git-ygg
     /etc/nginx/sites-available/kgivler-api-ygg
     /etc/nginx/sites-available/kgivler-ygg
     /etc/nginx/sites-available/steam-ygg
 
-Other nginx configuration:
+Other standard nginx configuration:
     /etc/nginx/fastcgi.conf
     /etc/nginx/fastcgi_params
     /etc/nginx/proxy_params
     /etc/nginx/mime.types
     /etc/nginx/snippets/
 
-Enabled-site symlinks were not explicitly inventoried.
+Current Yggdrasil HTTP/HTTPS listeners include addresses from:
+    201:762f:80bd:20e1:20db:1239:19af:f25e
+    301:762f:80bd:20e1::/64
+
+Enabled-site symlinks should be inventoried explicitly if exact restore fidelity is
+required.
 
 ===============================================================================
-12. SSH
+14. SSH
 ===============================================================================
 
 User:
@@ -551,7 +879,7 @@ User:
 Directory:
     /home/joyfulreaper/.ssh
 
-Observed files:
+Important files historically observed:
     authorized_keys
     config
     dn42_registry
@@ -561,27 +889,32 @@ Observed files:
     known_hosts
     known_hosts.old
 
-P0 backup:
+P0 recovery material:
     private keys
     authorized_keys
-    SSH config
+    required SSH client configuration
 
 DN42 registry signing/auth key:
     ~/.ssh/dn42_registry
 
-DN42 key is passphrase-protected.
+The DN42 key is passphrase-protected.
 
-OpenSSH hardening config observed:
+OpenSSH hardening configuration historically observed:
     /etc/ssh/sshd_config.d/50-cloud-init.conf
     /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
     /etc/ssh/sshd_config.d/99-hardening.conf
 
-NOTE:
-    Full sshd effective config was not inventoried.
+Effective security posture previously verified:
+    root login disabled
+    password authentication disabled
+    keyboard-interactive authentication disabled
+    public-key authentication enabled
 
 ===============================================================================
-13. PERSISTENT BIND-MOUNTED APPLICATION DATA
+15. PERSISTENT APPLICATION DATA
 ===============================================================================
+
+Important bind-mounted or host-resident application data:
 
 HappyGopher:
     /var/lib/happygopher/content
@@ -611,6 +944,9 @@ RandomGitHub:
 WSIWOT:
     /var/lib/wsiwot
 
+Mission Control Agent:
+    /var/lib/missioncontrol-agent
+
 HappyFinger:
     /opt/joyful-stack/data/happyfinger
 
@@ -627,16 +963,19 @@ Dockge:
     /opt/dockge/data
 
 SmolSearch:
-    /opt/smolsearch/data/smolsearch.db
+    /opt/smolsearch/data
 
-Mission Control Agent:
-    /var/lib/missioncontrol-agent/mission-control-agent.db
+Deployment/configuration trees:
+    /opt/stacks
+    /opt/joyful-stack
+    /opt/dockge
+    /opt/smolsearch
 
 ===============================================================================
-14. KNOWN DATABASES
+16. KNOWN DATABASES / STATE STORES
 ===============================================================================
 
-SQLite / DB files observed:
+Known SQLite/database files include:
 
 SmolSearch:
     /opt/smolsearch/data/smolsearch.db
@@ -647,9 +986,6 @@ Beszel:
 
 Dockge:
     /opt/dockge/data/dockge.db
-
-Joyful-stack / dashboard:
-    /opt/stacks/joyful-stack/dashboard-auth.db
 
 HappyQOTD:
     /var/lib/happyqotd/data/happyqotd.db
@@ -667,381 +1003,383 @@ Mission Control Agent:
 RandomGitHub:
     /var/lib/randomgithub/data/randomgithub.db
 
+ntfy:
+    application SQLite state under:
+        /opt/stacks/joyful-stack/data/ntfy/
+
+Mission Control named-volume state:
+    archive
+    GitActivity
+    dashboard authentication/data-protection
+    NATS JetStream
+
 TCPNoise:
     ~/freebsd-c-lab/07-tcpnoise/tcpnoise.db
 
-HappyGopher / TCPNoise content:
-    /var/lib/happygopher/content/commands/tcpnoise.db
+Backup policy:
+    Live SQLite databases should be snapshotted with SQLite's backup mechanism
+    and verified rather than copied blindly while active.
 
-BACKUP NOTE:
-    SQLite databases should ideally be copied using SQLite's backup mechanism or
-    otherwise snapshotted consistently rather than blindly copied while busy.
+The current Clanker backup script performs consistent SQLite snapshots for known
+important databases before restic backup.
 
 ===============================================================================
-15. DOCKER NAMED VOLUMES
+17. DOCKER NAMED VOLUMES
 ===============================================================================
 
-Named volumes with meaningful state:
+Current Docker volume inventory:
+    10 local volumes
+    6 active
+    ~94 MB total at 2026-09-25 inventory
+
+Known meaningful named-volume state includes:
 
 joyful-stack_archive-data
-    Size at inventory time: ~67 MB
-    Mounted by:
-        joyful-stack-archive-1
-    Destination:
-        /data
+    Mission Control archive data
 
 joyful-stack_nats-data
-    Size: ~7.2 MB
-    Mounted by:
-        joyful-stack-nats-1
-    Destination:
-        /data/jetstream
+    NATS JetStream
 
 joyful-stack_gitactivity-data
-    Size: ~600 KB
-    Mounted by:
-        joyful-stack-gitactivity-1
-    Destination:
-        /data
+    GitActivity data
 
 joyful-stack_dashboard-data
-    Size: ~28 KB
-    Mounted by:
-        joyful-stack-dashboard-1
-    Destination:
-        /app/data
+    Dashboard authentication/application state and Data Protection keys
 
-dozzle_dozzle_data
-    Size: ~12 KB
-    Mounted by:
-        dozzle
-    Destination:
-        /data
+Dozzle state:
+    small local volume
 
-Anonymous Docker volumes observed:
-
-    3ba84dac2af40ccfbfc13ebc7876b0571260247f3f0d5a0913734c9cf42887c7
-    62e6b93a5096d3e2b62afbbcdd03d9b8a3e2f8e6ac2a4a525bf85c77373caac9
-    73336d000554830a7454d04e5d03e1a8318479fb51e5ecb3e450ef1156dbdb67
-    c06a31f1582ebfa14ef9e93b50e56d19a64f8943d6a349e9f59998166ec74918
-    c0017f467d21455e66243830cddb788392fc585c7f84a4a8205dce2deaac97b3
-
-All were ~4 KB at inventory time.
-
-Only one was attached:
-    62e6... -> joyful-stack-archive-1 -> /app/data
-
-These do NOT currently appear to contain meaningful state, but do not prune until
-the archive container's anonymous /app/data mount is understood or intentionally
-removed.
+Backup implementation currently snapshots selected meaningful volume state rather
+than blindly backing up all of /var/lib/docker.
 
 ===============================================================================
-16. TCPNOISE
+18. TCPNOISE
 ===============================================================================
 
-TCPNoise is currently started manually, not by systemd or Docker.
+TCPNoise is currently a manually-operated / experimental service rather than part
+of the primary Docker stack.
 
 Working tree:
     ~/freebsd-c-lab/07-tcpnoise/
 
-Observed persistent/interesting files:
+Known persistent/interesting data:
     tcpnoise.db
+    connection logs
+    banners/configuration data
 
-    logs:
-        21.log
-        2222.log
-        23.log
-        2323.log
-        3389.log
-        420.log
-        42069.log
-        443.log
-        5432.log
-        80.log
-        8080.log
+Public listeners observed at 2026-09-25 inventory include:
+    TCP/21
+    TCP/23
+    TCP/420
+    TCP/2222
+    TCP/2323
+    TCP/3389
+    TCP/5432
+    TCP/8080
+    TCP/42069
 
-    banner/config data:
-        banners.txt
-        telnetbanners.txt
-        *_banner.txt
-
-    source/build:
-        src/
-        include/
-        Makefile
-        tcpnoise
-
-    companion projects:
-        AndroidNoiseClicker/
-        TcpNoiseClicker/
-
-Approximate directory size at inventory time:
-    ~36 MB
-
-Notable log:
-    443.log ~21 MB
-
-Public TCP listeners observed:
-    21
-    23
-    420
-    2222
-    2323
-    3389
-    5432
-    8080
-    42069
-
-Additional TCPNoise listener evidence included TCP/80 and TCP/443 logging, though
-the live socket snapshot did not show TCPNoise bound to those two at that instant.
+Additional historical TCPNoise logging/listener work has included:
+    TCP/80
+    TCP/443
 
 Recovery behavior:
-    Manual start only.
-    No automatic boot startup currently expected.
-
-Potential future work:
-    Decide whether tcpnoise should remain deliberately manual or get a systemd unit.
+    manual start is currently expected unless a dedicated service is intentionally
+    added later.
 
 ===============================================================================
-17. CERTIFICATES
+19. CERTIFICATES
 ===============================================================================
 
-Let's Encrypt renewal configuration observed:
-    /etc/letsencrypt/renewal/steam.ygg.kgivler.com.conf
+Certbot is installed and has an active renewal timer.
 
-certbot.timer is active.
+Let's Encrypt certificate observed at 2026-09-25 inventory:
 
-HappyGemini certs:
-    /var/lib/happygemini/certs
+Certificate:
+    steam.ygg.kgivler.com
+
+Key type:
+    ECDSA
+
+Expiry:
+    2026-12-19 19:31:49 UTC
+
+Certificate path:
+    /etc/letsencrypt/live/steam.ygg.kgivler.com/fullchain.pem
+
+Private key path:
+    /etc/letsencrypt/live/steam.ygg.kgivler.com/privkey.pem
+
+Certificate/private-key material required for services is secret-bearing recovery
+material.
+
+Yggdrasil-specific TLS is currently in active use.
+
+DN42 certificates / DN42 CA integration:
+    not yet implemented at this snapshot.
+
+===============================================================================
+20. BACKUP ARCHITECTURE / POLICY
+===============================================================================
+
+Clanker's backup architecture is implemented.
+
+Primary backup script:
+    /home/joyfulreaper/UsefulScripts/VPS/Backup/Clanker/backup.sh
+
+Installed entry point:
+    /usr/local/sbin/vps-backup
+
+systemd:
+    vps-backup.service
+    vps-backup.timer
+
+Frequency:
+    daily
+
+Destinations:
+
+1. Peer copy on ScopeCreep over WireGuard/rest-server
+
+    Repository:
+        rest:http://10.99.0.9:8000/clanker/
+
+    Tags:
+        clanker
+        peer
+
+2. Independent Backblaze B2 object-storage copy
+
+    Repository:
+        s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-clanker
+
+    Tags:
+        clanker
+        offsite
+        b2
+
+The backup:
+    - requires root
+    - prevents overlapping runs with flock
+    - verifies destination repository connectivity first
+    - builds a fresh staging tree
+    - stages most required host/application configuration
+    - excludes backup credentials themselves
+    - creates consistent SQLite snapshots
+    - snapshots selected Docker named-volume state
+    - archives NATS JetStream state
+    - generates a recovery manifest
+    - writes to ScopeCreep
+    - writes to Backblaze B2
+    - sends success/failure notifications through ntfy
+    - cleans staging data on exit
+
+Recent observed run:
+    2026-09-25
+
+Result:
+    successful peer backup to ScopeCreep
+    successful B2 snapshot upload
+
+Observed peer snapshot:
+    d15e7ae3
+    ~365.5 MiB logical snapshot size
+
+Observed B2 snapshot:
+    4ee2f906
+    ~365.5 MiB logical snapshot size
 
 NOTE:
-    Full /etc/letsencrypt inventory was not captured.
-    Certificate/key backup requirements should be reviewed.
+    A historical/questioned Backblaze B2 maintenance/quota issue is still being
+    investigated separately. Do not treat that open investigation as evidence
+    that ordinary daily B2 snapshot uploads are currently failing; the
+    2026-09-25 upload completed successfully.
+
+Restic log warning:
+    systemd-launched restic commands currently report that neither HOME nor
+    XDG_CACHE_HOME is defined, so restic cannot use its cache directory.
+
+    This warning did not prevent the observed backup from succeeding.
 
 ===============================================================================
-18. BACKUP PRIORITY MODEL
+21. BACKUP CONTENT
 ===============================================================================
 
-P0 - Secrets / access / identities
---------------------------------
-Must exist outside Clanker and preferably encrypted.
+The current backup stages most recovery-relevant host/application state rather
+than cloning the entire filesystem.
 
+Important staged categories include:
+
+Host configuration:
+    most of /etc
+
+Application/deployment data:
+    /home/joyfulreaper/.ssh
+    /var/lib/happygopher
+    /var/lib/happygopher-mystery
+    /var/lib/happygemini
+    /var/lib/happyqotd
+    /var/lib/randomsteam
+    /var/lib/randomgithub
+    /var/lib/wsiwot
+    /var/lib/missioncontrol-agent
+    /opt/stacks
+    /opt/dockge
+    /opt/smolsearch
+    /opt/joyful-stack
+
+Consistent SQLite snapshots:
+    known live SQLite databases are copied using SQLite's .backup mechanism and
+    checked with PRAGMA quick_check.
+
+Selected named-volume state:
+    Mission Control archive data
+    GitActivity data
+    Dashboard authentication/data-protection state
+    NATS JetStream state
+
+Recovery manifest generated during backup includes:
+    host/platform information
+    filesystems
+    block devices
+    IP addresses
+    IPv4 routes
+    IPv6 routes
+    WireGuard state
+    Docker containers
+    Docker Compose projects
+    Docker volumes
+    Docker networks
+    enabled systemd units
+    listening sockets
+    package versions
+    root crontab
+    joyfulreaper crontab
+
+Regeneratable runtime state is intentionally not treated as primary backup data.
+
+===============================================================================
+22. BACKUP SECRETS / OUT-OF-BAND RECOVERY REQUIREMENTS
+===============================================================================
+
+Backup secrets live under:
+    /etc/vps-backup/
+
+Observed secret/config filenames:
+    b2.env
+    molasses-repository-password
+    ntfy.env
+    peer-repository-password
+    peer.env
+    scopecreep-repository-password
+
+These files are secret-bearing and must NOT be committed to the public
+UsefulScripts repository.
+
+The backup deliberately excludes /etc/vps-backup from its normal staged /etc
+copy.
+
+Therefore these files are a P0 out-of-band recovery dependency.
+
+Other P0 secret/identity material includes:
     /etc/wireguard/
     /etc/yggdrasil/
     /home/joyfulreaper/.ssh/
-    Cloudflared tunnel token
-    Compose .env files
-    HappyGemini certificate/private-key material
+    Cloudflare Tunnel credentials/token
+    service .env/environment files
+    TLS/certificate private keys
 
-    Secret-bearing service environment files:
-        /etc/missioncontrol-agent.env
-        /etc/molasses-watch.env
-        /etc/randomsteam/randomsteam.env
-        /etc/ygglanding.env
+===============================================================================
+23. PEER BACKUP STORAGE RESPONSIBILITY
+===============================================================================
 
-    other API keys / application secrets
+Clanker also hosts restic repositories for peer systems through rest-server.
 
-P1 - Irreplaceable or user-created state
-----------------------------------------
-    /var/lib/happygopher/
-    /var/lib/happygopher-mystery/
-    /var/lib/happygemini/
-    /var/lib/happyqotd/
-    /var/lib/randomsteam/
-    /var/lib/randomgithub/
-    /var/lib/wsiwot/
-    /opt/smolsearch/data/
-    /opt/stacks/beszel/beszel_data/
-    /opt/dockge/data/
-    /opt/joyful-stack/data/
-    Docker named volumes containing application/history state
-    TCPNoise database/logs if desired
+rest-server:
+    Docker container
+    bound to:
+        10.99.0.1:8000
 
-P2 - Rebuild configuration
---------------------------
-    /etc/bird/
+Local restic storage:
+    /var/lib/restic
+
+Observed total local repository size at 2026-09-25 inventory:
+    ~36 MB
+
+Peer repository maintenance timers on Clanker:
+    scopecreep-backup-maintenance.timer
+    molasses-backup-maintenance.timer
+
+Maintenance scripts are kept in UsefulScripts under:
+    VPS/Backup/Clanker/
+
+Policy:
+    peer repositories are snapshot repositories, not destructive mirrors.
+
+Recovery planning must preserve:
+    repository data
+    repository authentication metadata
+    repository password material stored separately under /etc/vps-backup
+
+===============================================================================
+24. BACKUP PRIORITY MODEL
+===============================================================================
+
+P0 - irreplaceable identity / access / secrets:
+    /etc/vps-backup/*
+    WireGuard private configuration
+    Yggdrasil private configuration/key material
+    SSH private keys / authorized_keys
+    DN42 registry key
+    Cloudflare Tunnel credentials
+    service secret environment files
+    TLS private keys
+    restic repository passwords
+
+P1 - important persistent application state:
+    /var/lib/happygopher
+    /var/lib/happygopher-mystery
+    /var/lib/happygemini
+    /var/lib/happyqotd
+    /var/lib/randomsteam
+    /var/lib/randomgithub
+    /var/lib/wsiwot
+    /var/lib/missioncontrol-agent
+    /opt/smolsearch/data
+    /opt/dockge/data
+    important named-volume state
+    local peer restic repositories where Clanker is storage host
+
+P2 - useful/reproducible configuration:
+    /etc/bird
     /etc/docker/daemon.json
-    /etc/nginx/
-    /etc/ufw/
-    /etc/sysctl.d/
-    /etc/systemd/system/
+    /etc/nginx
+    /etc/ufw
+    /etc/sysctl.d
+    /etc/systemd/system
     Compose files
-    application configs under /opt
+    application configuration under /opt
+    UsefulScripts checkout
 
-P3 - Useful operational history
--------------------------------
+P3 - useful operational/history state:
     Mission Control archives
-    GitActivity history
-    Dashboard state
-    NATS JetStream
+    GitActivity data
     Beszel history
-    Dozzle state
-    ntfy history
-    TCPNoise logs
+    ntfy state
+    NATS JetStream
+    selected TCPNoise history/logs
 
-P4 - Regeneratable
-------------------
-Do not spend significant backup space on:
-
-    Docker images
-    container writable layers
-    Docker/BuildKit build cache
-    containerd overlayfs snapshots/content blobs
-    apt cache
-    normal system package files
-    /tmp
-    transient logs
-    Docker bridge/network state
+P4 - regenerate instead:
     /var/lib/docker wholesale
     /var/lib/containerd wholesale
+    Docker images/layers
+    BuildKit cache
+    package caches
+    temporary files
+    routine system logs
+    Docker bridge runtime state
 
 ===============================================================================
-19. BACKUP ARCHITECTURE UNDER CONSIDERATION
-===============================================================================
-
-Potential design:
-
-    Clanker ------> ScopeCreep
-       \              /
-        \            /
-         ---> R2 <---
-
-Possible reciprocal local/off-host snapshots:
-    Clanker backs up to ScopeCreep
-    ScopeCreep backs up to Clanker
-
-Important:
-    Treat these as snapshot repositories, NOT mirrors.
-    Avoid destructive sync semantics such as blind rsync --delete.
-
-Potential third copy:
-    Cloudflare R2 free-tier object storage
-
-Potential repository format:
-    Restic or similar encrypted, deduplicated snapshot repository.
-
-Potential protection:
-    Historical retention.
-    Possibly bucket-lock/immutability for a separate protected tier, after checking
-    compatibility with repository maintenance/pruning.
-
-No backup script has been written yet.
-Design first.
-
-===============================================================================
-20. USERS / GROUPS / OWNERSHIP -- NOT YET INVENTORIED
-===============================================================================
-
-Interactive/admin account:
-    joyfulreaper
-
-Service accounts of particular interest:
-    happygopher
-    randomsteam
-    happyfinger
-    happyecho
-    missioncontrol-agent
-    bird
-
-joyfulreaper group memberships of operational interest:
-    sudo
-    users
-    happystaff
-    docker
-
-Privilege notes:
-    joyfulreaper has full sudo access.
-
-    Membership in the docker group effectively grants privileged Docker access and
-    should be treated as root-equivalent operational access.
-
-Restore ownership caveat:
-    Several Docker-created persistent directories use numeric UID/GID 1654:1654.
-
-    Backup and restore operations must preserve numeric ownership rather than
-    assuming all application data maps directly to named host users/groups.
-
-Examples observed:
-    /var/lib/happygopher/data
-    /var/lib/randomsteam/
-    /var/lib/randomgithub/data
-
-Other persistent paths use a mix of:
-    root:root
-    joyfulreaper:joyfulreaper
-    happygopher:happystaff
-    missioncontrol-agent:missioncontrol-agent
-
-A raw users/groups/ownership inventory was captured privately on 2026-09-21 and
-is intentionally not reproduced here.
-
-===============================================================================
-21. PACKAGE / SOFTWARE INVENTORY -- NOT YET COMPLETE
-===============================================================================
-
-Known important packages/software:
-    Docker CE
-    Docker Buildx / Compose plugin
-    containerd
-    BIRD 2.18
-    WireGuard
-    Yggdrasil
-    nginx
-    cloudflared
-    OpenSSH
-    chrony
-    UFW
-    certbot
-    Git
-    SQLite tooling
-    ASP.NET Core Runtime 10
-    build-essential
-    CMake
-    Go toolchain
-    sysstat
-
-APT sources of particular interest:
-    Ubuntu resolute / updates / backports / security
-    Docker official Ubuntu repository
-    Cloudflare cloudflared repository
-    Yggdrasil repository
-
-Snaps:
-    none listed at inventory time.
-
-Custom/local binary observed:
-    /usr/local/bin/molasses-watch
-
-A full manually-installed APT package list and repository inventory was captured
-privately on 2026-09-21.
-
-Still useful to capture later if needed:
-    - exact versions for all manually installed packages
-    - locally compiled tools outside known source trees
-
-===============================================================================
-22. DNS / HOSTNAME / RESOLVER -- PARTIAL
-===============================================================================
-
-Observed:
-    systemd-resolved running
-    systemd-networkd running
-
-Files/configuration of interest:
-    /etc/resolv.conf
-    /etc/hosts
-    /etc/systemd/resolved.conf
-    /etc/systemd/networkd.conf
-    /etc/systemd/networkd.conf.d/50-cloudimg-settings.conf
-    /etc/netplan/
-
-Resolver, hosts and netplan state were captured privately on 2026-09-21.
-
-The public dossier intentionally records the architecture rather than dumping the
-full resolver/network configuration.
-
-===============================================================================
-23. SECURITY / ACCESS -- PARTIAL
+25. SECURITY / ACCESS
 ===============================================================================
 
 SSH:
@@ -1052,105 +1390,48 @@ SSH:
 
 Firewall:
     UFW enabled
-    default incoming policy: deny
-    default outgoing policy: allow
-    default routed policy: deny
+    default incoming: deny
+    default outgoing: allow
+    default routed: deny
 
-    SSH is allowed from the WireGuard address ranges rather than generally from
-    the public Internet.
+SSH exposure:
+    restricted to WireGuard ranges
 
-Other security/access components:
-    unattended upgrades
-    AppArmor
+Public exposure is intentional for:
+    legacy RFC protocol services
+    Gopher
+    Gemini
+    Yggdrasil transport
     WireGuard
-    Cloudflare Tunnel
-    Yggdrasil overlay networking
+    DN42 peer tunnels
+    TCPNoise bait/listener ports
 
-Public exposure:
-    old RFC protocol services are intentionally public
-    Gemini is intentionally public
-    TCPNoise intentionally exposes several bait/listener ports
+BGP:
+    TCP/179 listener owned by BIRD
+    peer-interface firewall rules must account for peers that initiate TCP
+    connections toward Clanker
 
-Secret-bearing files that must never be committed:
-    /etc/missioncontrol-agent.env
-    /etc/molasses-watch.env
-    /etc/randomsteam/randomsteam.env
-    /etc/ygglanding.env
-    Compose .env files
-    WireGuard private-key material
-    Yggdrasil private-key material
-    SSH private keys
-    HappyGemini private keys/cert material as applicable
+Secret-bearing files must never be committed publicly.
 
-Cloudflared:
-    Tunnel token currently lives directly in cloudflared.service.
-
-Captured privately but intentionally omitted from this public dossier:
-    full UFW rules
-    nftables ruleset
-    full effective sshd configuration
+Docker group membership:
+    should be treated as root-equivalent operational access.
 
 ===============================================================================
-24. INVENTORY GAPS / COMMANDS TO RUN LATER
+26. RESTORE ORDER
 ===============================================================================
 
-The major host inventory passes are now complete.
+Suggested high-level rebuild order:
 
-Captured privately on 2026-09-21:
-    users / groups / sudo / docker membership
-    manually installed package list
-    APT repositories
-    UFW rules
-    nftables ruleset
-    effective sshd configuration
-    netplan / hosts / resolver state
-    block devices / fstab / filesystem UUIDs
-    enabled sockets
-    custom systemd unit contents
-    persistent-path ownership
-    top-level disk usage
+1. Provision a fresh compatible Ubuntu VPS.
 
-Still worth capturing or deciding:
+2. Restore administrator / SSH access.
 
-CLOUD / VPS
------------
-    provider
-    plan/spec
-    region
-    public IPv4 allocation
-    public IPv6 allocation
-    reverse DNS
-    rescue-console procedure
-    provider snapshot capability
-    provider credentials location (NOT in this file)
+3. Recreate required users/groups and sudo access.
 
-SERVICE CLEANUP
----------------
-    classify old host-managed Happy*/RandomSteam systemd units
-    identify exact Cloudflare Tunnel(s) represented by cloudflared.service
-    review Let's Encrypt/certificate inventory
-    decide whether TCPNoise remains intentionally manual
+4. Restore basic public network configuration.
 
-BACKUP DESIGN
--------------
-    record ScopeCreep in the same general format
-    finalize backup repository topology
-    decide R2/restic strategy
-    define retention policy
-    write restore-test procedure
-    only then automate backups
-
-===============================================================================
-25. RESTORE ORDER
-===============================================================================
-
-If Clanker disappears completely:
-
-1. Provision fresh Ubuntu VPS.
-2. Establish SSH access.
-3. Recreate admin user(s), groups and sudo access.
-4. Install base packages:
-       Docker/containerd
+5. Install base software:
+       Docker / containerd / Compose
        WireGuard
        BIRD
        Yggdrasil
@@ -1158,126 +1439,285 @@ If Clanker disappears completely:
        cloudflared
        UFW
        certbot
-       required tooling
-5. Restore secret material:
+       Git
+       SQLite tooling
+       ASP.NET Core runtime
+       required build/utility packages
+
+6. Restore P0 secret/identity material from the separate secure copy:
        SSH
        WireGuard
        Yggdrasil
-       Cloudflare Tunnel token
-       .env files
-       app certificates/keys
-6. Restore host configuration:
-       sysctl
-       Docker daemon config
-       systemd units
-       BIRD
-       nginx
-       UFW
-       network-related config
-7. Restore Compose definitions.
-8. Restore bind-mounted persistent data.
-9. Restore SQLite snapshots.
-10. Restore named Docker volume contents.
-11. Start networking/infra:
-       systemd-networkd
-       WireGuard
-       Yggdrasil
-       dn42-dummy
-       BIRD
-       nginx
-       cloudflared
-12. Bring Compose projects up.
-13. Verify:
+       DN42 registry key
+       Cloudflare Tunnel credentials
+       /etc/vps-backup
+       application environment files
+       TLS private keys/certificates as required
+
+7. Restore host configuration:
+       /etc/bird
+       /etc/docker
+       /etc/nginx
+       /etc/ufw
+       /etc/sysctl.d
+       /etc/systemd/system
+       network configuration
+
+8. Recreate dn42-dummy.
+
+9. Restore/start WireGuard:
+       primary wg0
+       DN42 peer interfaces
+
+10. Restore/start Yggdrasil.
+
+11. Restore/start BIRD.
+
+12. Verify:
+       local DN42 prefixes
+       ROA tables
+       all intended BGP sessions
+       own-prefix-only export policy
+       no accidental transit
+
+13. Restore Compose/deployment trees.
+
+14. Restore bind-mounted persistent application data.
+
+15. Restore consistent SQLite/database snapshots.
+
+16. Restore selected Docker named-volume state.
+
+17. Start Docker Compose projects.
+
+18. Restore/start nginx and cloudflared.
+
+19. Restore/start Mission Control Agent and other required host services.
+
+20. Restore/check peer restic repositories hosted on Clanker.
+
+21. Enable:
+       daily Clanker backup timer
+       ScopeCreep repository maintenance
+       Molasses repository maintenance
+       B2 repository maintenance
+       certificate renewal
+       other custom timers
+
+22. Verify:
        WireGuard peers
-       Yggdrasil
-       DN42 local addresses/BIRD
+       Yggdrasil peers
+       DN42 reachability
+       all intended BGP peers
        protocol listeners
        public IPv4/IPv6
+       Yggdrasil services
        Cloudflare tunnels
        Mission Control
-       application health
-14. Re-enable optional/manual services such as TCPNoise.
-15. Compare live service inventory to this document.
+       RandomSteam / RandomGitHub / WSIWOT
+       Happy* services
+       backup notifications
+       peer backup repository access
+       B2 snapshot upload
+
+23. Re-enable optional/manual services such as TCPNoise.
+
+24. Perform at least one representative restore test.
 
 ===============================================================================
-26. CURRENT HIGH-LEVEL SERVICE MAP
+27. CURRENT HIGH-LEVEL SERVICE MAP
 ===============================================================================
 
-Internet / IPv6 / VPN / overlays
+Internet / public IPv4+IPv6
         |
         +-- ens3
-        |     public IPv4 / IPv6
+        |     142.4.38.224
+        |     public IPv6
+        |
+      Clanker
         |
         +-- wg0
         |     10.99.0.1/24
         |     fd42:42:42::1/64
+        |        |
+        |        +-- homelab / peer infrastructure network
+        |        +-- Mission Control internal endpoints
+        |        +-- rest-server 10.99.0.1:8000
         |
-        +-- tun0
-        |     Yggdrasil
+        +-- Yggdrasil / tun0
+        |     201:762f:80bd:20e1:20db:1239:19af:f25e
+        |     301:762f:80bd:20e1::/64
+        |        |
+        |        +-- ygglanding
+        |        +-- HappyGopher Yggdrasil
+        |        +-- Yggdrasil HTTP/HTTPS services
         |
-        +-- dn42-dummy
-              172.20.220.49/28
-              fdf0:e12c:5528::1/48
-              |
-              +-- BIRD
-                    future DN42 BGP peers
-
-Host services
+        +-- DN42 / dn42-dummy
+        |     AS4242420425
+        |     172.20.220.49/28
+        |     fdf0:e12c:5528::1/48
+        |        |
+        |        +-- wg-dn42-ewr1 -> RoutedBits AS4242420207
+        |        |                       Established
+        |        |
+        |        +-- wg-dn42-ny1  -> Baragoon AS4242421732
+        |        |                       Established
+        |        |
+        |        +-- wg-dn42-hs1  -> HEADSCARF175 AS4242420842
+        |                                Established
         |
-        +-- cloudflared
         +-- nginx
+        +-- cloudflared
         +-- missioncontrol-agent
-        +-- vpn-landing
-        +-- ygglanding
-        +-- Yggdrasil
-        +-- WireGuard
-        +-- BIRD
         +-- SSH
-        +-- TCPNoise (manual)
+        +-- TCPNoise (manual/experimental)
+        |
+        +-- Docker
+              |
+              +-- joyful-stack
+              |     +-- Happy* protocol/smolnet services
+              |     +-- RandomSteam
+              |     +-- RandomGitHub
+              |     +-- WSIWOT
+              |     +-- Mission Control
+              |     +-- NATS
+              |     +-- ntfy
+              |
+              +-- rest-server-clanker
+              +-- Beszel
+              +-- Dozzle
+              +-- Dockge
+              +-- IT Tools
+              +-- SmolSearch
 
-Docker
-        |
-        +-- joyful-stack
-        |     +-- Happy* protocol services
-        |     +-- Mission Control services
-        |     +-- RandomSteam
-        |     +-- RandomGitHub
-        |     +-- WSIWOT
-        |     +-- NATS
-        |     +-- ntfy
-        |
-        +-- Beszel
-        +-- Dozzle
-        +-- Dockge
-        +-- IT Tools
-        +-- SmolSearch
+Backup relationships:
+
+    Clanker -----------------------> ScopeCreep
+      daily peer snapshot             rest-server
+      restic over WireGuard           /clanker/
+
+    Clanker -----------------------> Backblaze B2
+      daily offsite snapshot
+
+    ScopeCreep --------------------> Clanker
+      peer snapshot                   rest-server
+
+    Molasses ----------------------> Clanker
+      peer snapshot                   rest-server
 
 ===============================================================================
-27. NEXT INVENTORY ACTIONS
+28. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
-Before declaring the dossier and recovery plan complete:
+Still worth checking, cleaning up or deciding:
 
-[x] Capture users/groups/sudo memberships
-[x] Capture manual package list and apt sources
-[x] Capture actual UFW/nftables rules privately
-[x] Capture effective sshd config privately
-[x] Capture /etc/netplan, /etc/hosts and resolver state privately
-[x] Capture filesystem/block-device/fstab details
-[x] Capture persistent-path ownership
-[x] Capture high-level disk usage
-[x] Confirm systemd health (0 failed units at snapshot time)
+1. Finish documenting a reusable DN42 peer template:
+       WireGuard
+       link-local addressing
+       BIRD
+       MP-BGP / extended next-hop
+       ROA validation
+       peer-specific UFW TCP/179 rules
+       troubleshooting workflow
 
-[ ] Classify old systemd units
-[ ] Identify exact Cloudflare Tunnel(s) represented by cloudflared.service
-[ ] Review Let's Encrypt/certificate inventory
-[ ] Decide whether TCPNoise remains manual
-[ ] Record ScopeCreep in the same format
-[ ] Design backup repository topology
-[ ] Decide R2/restic strategy
-[ ] Define retention policy
-[ ] Write restore test procedure
-[ ] Only then automate backups
+2. Remove the dead Yggdrasil lxak peer if it remains consistently unavailable:
+       tls://ygg-dc.lxak.net:8880
+
+3. Decide whether Clanker should ever provide DN42 transit.
+   Do not change the current own-prefix-only BIRD export filters casually.
+
+4. Build a DN42 landing page similar in spirit to YggLanding.
+
+5. Assign stable DN42 addresses to selected services.
+
+6. Expose selected services on DN42, with RandomSteam a likely early target.
+
+7. Investigate DN42 DNS / CA / TLS requirements before treating HTTPS service
+   naming as complete.
+
+8. Review exact enabled nginx site symlinks and consolidate overlay-specific
+   nginx configuration where useful.
+
+9. Classify/remove old host-managed Happy*/RandomSteam unit files if they are
+   truly obsolete.
+
+10. Move the Cloudflare tunnel token out of the unit file if it is still embedded
+    there.
+
+11. Investigate/fix the restic systemd cache warning:
+        HOME/XDG_CACHE_HOME not defined
+
+12. Finish investigating the historical/questioned B2 maintenance/quota issue.
+    Ordinary 2026-09-25 B2 snapshot upload was successful.
+
+13. Perform and document representative restore tests:
+        Clanker peer backup from ScopeCreep
+        Clanker B2 restore
+        one peer repository hosted on Clanker
+
+14. Decide whether TCPNoise should remain intentionally manual.
+
+15. Keep this dossier current when:
+        a new overlay/peer is added
+        backup topology changes
+        major services move between host and Docker
+        important persistent state moves
+
+===============================================================================
+29. SUMMARY
+===============================================================================
+
+Clanker is the primary public infrastructure VPS and the most multi-role machine
+in this small fleet.
+
+Its current responsibilities include:
+    - public IPv4/IPv6 application hosting
+    - old RFC protocol services
+    - Gopher and Gemini
+    - RandomSteam / RandomGitHub / WSIWOT
+    - Mission Control
+    - WireGuard hub connectivity
+    - Yggdrasil overlay connectivity and hosted overlay services
+    - DN42 routing as AS4242420425
+    - nginx / reverse proxying
+    - Cloudflare Tunnel
+    - peer backup storage for ScopeCreep and Molasses
+    - its own peer + offsite restic backups
+    - experimental TCPNoise listeners
+
+DN42 is now an active production-like hobby role rather than a future plan.
+Three BGP peers are Established:
+    RoutedBits
+    Baragoon
+    HEADSCARF175
+
+Clanker currently exports only its own registered DN42 prefixes and does not
+provide general transit.
+
+Yggdrasil is also active with multiple healthy outbound peers and at least one
+inbound peer, with a routed /64 used for overlay-only services.
+
+The backup system is implemented rather than merely planned:
+    daily -> ScopeCreep
+    daily -> Backblaze B2
+    peer repositories for ScopeCreep and Molasses -> Clanker
+
+The most important recovery concern is preserving P0 secret/identity material
+outside Clanker, especially:
+    /etc/vps-backup
+    WireGuard/Yggdrasil private material
+    SSH/DN42 registry keys
+    Cloudflare credentials
+    TLS private keys
+    application secrets
+
+The main current cleanup/evolution items are:
+    - finish reusable DN42 peering documentation
+    - build DN42 landing/services
+    - decide later whether to carry DN42 transit
+    - remove stale Yggdrasil/legacy service configuration
+    - finish B2 maintenance investigation
+    - perform representative restore tests
 
 ===============================================================================
 END

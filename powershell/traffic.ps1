@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================================
 
 $tshark = "C:\Program Files\Wireshark\tshark.exe"
-$interfaceName = "vEthernet (LAN-External)"
+$interfaceName = "Wi-Fi"
 
 if (-not (Test-Path $tshark)) {
     Write-Host "TShark not found: $tshark" -ForegroundColor Red

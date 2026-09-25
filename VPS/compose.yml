@@ -673,7 +673,19 @@ services:
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
 
       Archive__BaseUrl: http://archive:8080/
+
       Agent__BaseUrl: https://status-api.kgivler.com/
+      Agents__Nodes__0__NodeId: clanker
+      Agents__Nodes__0__DisplayName: Clanker
+      Agents__Nodes__0__BaseUrl: https://status-api.kgivler.com/
+
+      Agents__Nodes__1__NodeId: scopecreep
+      Agents__Nodes__1__DisplayName: ScopeCreep
+      Agents__Nodes__1__BaseUrl: http://10.99.0.9:5194/
+
+      Agents__Nodes__2__NodeId: molasses
+      Agents__Nodes__2__DisplayName: Molasses
+      Agents__Nodes__2__BaseUrl: http://10.99.0.10:5194/
 
       GitActivityApi__Enabled: "true"
       GitActivityApi__BaseUrl: http://gitactivity:8080/

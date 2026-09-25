@@ -1,0 +1,170 @@
+## ntfy: Add a Least-Privilege Service User
+
+When a script or service needs to publish ntfy notifications, don't give it your administrator token. Create a dedicated ntfy user, restrict that user to the required topic, then generate a token for the service.
+
+Example: a service called `dn42landing` needs to publish only to `dn42-peering`.
+
+### 1. Create the user
+
+From the directory containing the ntfy Docker Compose service:
+
+```bash
+sudo docker compose exec ntfy ntfy user add dn42landing
+```
+
+ntfy will ask for a password. The service will authenticate with a token rather than this password, so use a strong random password and don't embed it in the application.
+
+A regular ntfy user has no administrator privileges.
+
+### 2. Grant only the required topic permission
+
+Give the service write-only access to its notification topic:
+
+```bash
+sudo docker compose exec ntfy \
+  ntfy access dn42landing dn42-peering write-only
+```
+
+`write-only` allows the account to publish notifications but not subscribe to or read them.
+
+Verify:
+
+```bash
+sudo docker compose exec ntfy ntfy access dn42landing
+```
+
+You should see something resembling:
+
+```text
+user dn42landing (role: user, tier: none)
+- write-only access to topic dn42-peering
+```
+
+ntfy also accepts the shorter `wo` alias for `write-only`. ([ntfy][1])
+
+### 3. Generate a service token
+
+```bash
+sudo docker compose exec ntfy \
+  ntfy token add --label="DN42Landing peering requests" dn42landing
+```
+
+ntfy returns a token beginning with:
+
+```text
+tk_...
+```
+
+Treat this as a secret.
+
+**Do not commit it to Git.**
+
+Tokens inherit the permissions of their user. They do not currently have independent narrower permissions, which is why creating a dedicated least-privilege user is useful. ([ntfy][1])
+
+### 4. Store the token in the service's secret configuration
+
+For example:
+
+```bash
+sudo nano /etc/dn42landing.env
+sudo chmod 600 /etc/dn42landing.env
+```
+
+Configuration:
+
+```text
+DN42LANDING_NTFY_URL=http://127.0.0.1:5197/dn42-peering
+DN42LANDING_NTFY_TOKEN=tk_REPLACE_WITH_REAL_TOKEN
+```
+
+Never put the real token in the repository's `example.env`.
+
+### 5. Test authenticated publishing
+
+Without printing the token:
+
+```bash
+sudo bash -c '
+set -a
+source /etc/dn42landing.env
+set +a
+
+curl -i \
+  -H "Authorization: Bearer $DN42LANDING_NTFY_TOKEN" \
+  -H "Title: Service test" \
+  -d "Authenticated ntfy publishing works" \
+  "$DN42LANDING_NTFY_URL"
+'
+```
+
+A successful publish should return:
+
+```text
+HTTP/1.1 200 OK
+```
+
+A response such as:
+
+```text
+HTTP/1.1 403 Forbidden
+```
+
+usually means the token is missing, invalid, or its user does not have write access to that topic.
+
+### 6. Inspect users, ACLs, and tokens
+
+List users/access:
+
+```bash
+sudo docker compose exec ntfy ntfy user list
+sudo docker compose exec ntfy ntfy access
+```
+
+Inspect one service:
+
+```bash
+sudo docker compose exec ntfy ntfy access dn42landing
+```
+
+List its tokens:
+
+```bash
+sudo docker compose exec ntfy ntfy token list dn42landing
+```
+
+### 7. Revoke a token
+
+If a token leaks or is no longer needed:
+
+```bash
+sudo docker compose exec ntfy \
+  ntfy token remove dn42landing tk_REPLACE_WITH_TOKEN
+```
+
+Then generate a replacement and update the service configuration.
+
+Removing one token doesn't require changing the service user's password or affecting unrelated ntfy users. ([ntfy][1])
+
+### Why bother with a separate user?
+
+Instead of:
+
+```text
+admin token
+    └── service can access EVERYTHING
+```
+
+use:
+
+```text
+dn42landing user
+    │
+    └── dn42-peering
+          └── write only
+```
+
+If DN42Landing is compromised, the stolen credential can publish garbage to `dn42-peering`. It cannot read your notifications, publish to `vps-backups`, mess with `uptime`, or inherit your `kyle` administrator privileges.
+
+That's a pretty good Gopher page, actually: small, practical, self-hosting related, and derived directly from something you actually needed rather than generic LLM sludge.
+
+[1]: https://docs.ntfy.sh/config/?utm_source=chatgpt.com "Configuration - ntfy"

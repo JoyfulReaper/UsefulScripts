@@ -17,16 +17,19 @@ if (-not (Test-Path $tshark)) {
 # ============================================================================
 # REMOTE TRAFFIC TALKERS
 #
+# Continuous TShark capture.
+#
 # Shows:
 #
 #   - IPv4 vs IPv6 traffic
 #   - Session download/upload totals
 #   - Overall IPv4/IPv6 split
+#   - Current capture window totals
 #   - Top remote endpoints
 #   - Remote port
 #   - TCP / UDP / QUIC transport
 #   - RX / TX / total bytes
-#   - Average transfer rate during capture window
+#   - Average transfer rate
 #   - Optional reverse DNS hostname lookup
 #
 # Examples:
@@ -47,7 +50,7 @@ if (-not (Test-Path $tshark)) {
 
 
 # ---------------------------------------------------------------------------
-# Find the interface in TShark.
+# Find TShark interface.
 # ---------------------------------------------------------------------------
 
 $interfaces = & $tshark -D
@@ -79,7 +82,7 @@ $interfaceNumber = [int]$Matches[1]
 
 
 # ---------------------------------------------------------------------------
-# Find IP addresses assigned to this host on the selected interface.
+# Find local IP addresses.
 # ---------------------------------------------------------------------------
 
 $ipv4Addresses = @(
@@ -121,7 +124,7 @@ if (
 
 
 # ---------------------------------------------------------------------------
-# Build a fast lookup set containing all local addresses.
+# Fast lookup for local addresses.
 # ---------------------------------------------------------------------------
 
 $localAddresses =
@@ -139,24 +142,31 @@ foreach ($ip in $ipv6Addresses) {
 
 
 # ---------------------------------------------------------------------------
-# Session counters.
+# State.
 # ---------------------------------------------------------------------------
 
-[long]$totalV4In  = 0
-[long]$totalV4Out = 0
-[long]$totalV6In  = 0
-[long]$totalV6Out = 0
+$session = @{
+    V4In  = [long]0
+    V4Out = [long]0
+    V6In  = [long]0
+    V6Out = [long]0
+}
 
+$window = @{
+    V4In  = [long]0
+    V4Out = [long]0
+    V6In  = [long]0
+    V6Out = [long]0
+}
 
-# ---------------------------------------------------------------------------
-# Cache reverse DNS lookups.
-# ---------------------------------------------------------------------------
+$talkers = @{}
 
+# Contains either a DNS Task or a resolved hostname string.
 $dnsCache = @{}
 
 
 # ---------------------------------------------------------------------------
-# Formatting helpers.
+# Formatting.
 # ---------------------------------------------------------------------------
 
 function Format-Bytes {
@@ -208,7 +218,22 @@ function Format-Speed {
 }
 
 
-function Resolve-RemoteName {
+# ---------------------------------------------------------------------------
+# Non-blocking reverse DNS.
+#
+# First time an IP appears:
+#
+#   start DNS lookup
+#   immediately return "(resolving)"
+#
+# Later redraw:
+#
+#   if task finished, cache/display result
+#
+# This prevents DNS from stopping packet consumption.
+# ---------------------------------------------------------------------------
+
+function Get-RemoteName {
 
     param([string]$IPAddress)
 
@@ -216,363 +241,282 @@ function Resolve-RemoteName {
         return ""
     }
 
-    if ($dnsCache.ContainsKey($IPAddress)) {
-        return $dnsCache[$IPAddress]
+    if (-not $dnsCache.ContainsKey($IPAddress)) {
+
+        try {
+            $dnsCache[$IPAddress] =
+                [System.Net.Dns]::GetHostEntryAsync(
+                    $IPAddress
+                )
+        }
+        catch {
+            $dnsCache[$IPAddress] = ""
+            return ""
+        }
+
+        return "(resolving)"
     }
 
-    try {
-        $name =
-            [System.Net.Dns]::GetHostEntry(
-                $IPAddress
-            ).HostName
-    }
-    catch {
-        $name = ""
+    $entry = $dnsCache[$IPAddress]
+
+    if ($entry -is [string]) {
+        return $entry
     }
 
-    $dnsCache[$IPAddress] = $name
+    if ($entry.IsCompletedSuccessfully) {
 
-    return $name
+        try {
+            $name = $entry.Result.HostName
+        }
+        catch {
+            $name = ""
+        }
+
+        $dnsCache[$IPAddress] = $name
+
+        return $name
+    }
+
+    if (
+        $entry.IsFaulted -or
+        $entry.IsCanceled
+    ) {
+
+        $dnsCache[$IPAddress] = ""
+
+        return ""
+    }
+
+    return "(resolving)"
 }
 
 
 # ---------------------------------------------------------------------------
-# Initial display.
+# Process one TShark packet line.
 # ---------------------------------------------------------------------------
 
-Write-Host "=== REMOTE TRAFFIC TALKERS ===" `
-    -ForegroundColor Yellow
+function Process-CaptureLine {
 
-Write-Host "Interface: $InterfaceName"
-Write-Host "TShark interface: $interfaceNumber"
-
-Write-Host (
-    "Local IPv4: {0}" -f (
-        $ipv4Addresses -join ", "
-    )
-) -ForegroundColor DarkGray
-
-Write-Host (
-    "Local IPv6: {0}" -f (
-        $ipv6Addresses -join ", "
-    )
-) -ForegroundColor DarkGray
-
-Write-Host "Window: $WindowSeconds seconds"
-Write-Host "Top: $Top"
-Write-Host ""
-Write-Host "Press Ctrl+C to quit." `
-    -ForegroundColor DarkGray
-
-
-# ===========================================================================
-# Main capture loop.
-# ===========================================================================
-
-while ($true) {
-
-    # -----------------------------------------------------------------------
-    # Capture packet metadata.
-    #
-    # No payload is retained.
-    #
-    # frame.protocols gives us something similar to:
-    #
-    #   eth:ethertype:ip:tcp:tls
-    #   eth:ethertype:ip:udp:quic
-    #
-    # That allows actual QUIC detection without assuming UDP/443 == QUIC.
-    # -----------------------------------------------------------------------
-
-    $output = @(
-        & $tshark `
-            -i $interfaceNumber `
-            -n `
-            -a "duration:$WindowSeconds" `
-            -f "ip or ip6" `
-            -T fields `
-            -E occurrence=f `
-            -e frame.len `
-            -e ip.src `
-            -e ip.dst `
-            -e ipv6.src `
-            -e ipv6.dst `
-            -e tcp.srcport `
-            -e tcp.dstport `
-            -e udp.srcport `
-            -e udp.dstport `
-            -e frame.protocols
+    param(
+        [string]$Line,
+        $LocalAddresses,
+        [hashtable]$Session,
+        [hashtable]$Window,
+        [hashtable]$Talkers
     )
 
-    if ($LASTEXITCODE -ne 0) {
+    if ([string]::IsNullOrWhiteSpace($Line)) {
+        return
+    }
 
-        Write-Host ""
-        Write-Host (
-            "TShark exited with code $LASTEXITCODE."
-        ) -ForegroundColor Red
+    $parts = [regex]::Split(
+        $Line,
+        "`t"
+    )
 
-        break
+    if ($parts.Count -lt 10) {
+        return
+    }
+
+
+    $lengthText = $parts[0]
+
+    $ipv4Source = $parts[1]
+    $ipv4Dest   = $parts[2]
+
+    $ipv6Source = $parts[3]
+    $ipv6Dest   = $parts[4]
+
+    $tcpSourcePort = $parts[5]
+    $tcpDestPort   = $parts[6]
+
+    $udpSourcePort = $parts[7]
+    $udpDestPort   = $parts[8]
+
+    $protocolStack = $parts[9]
+
+
+    [long]$length = 0
+
+    if (
+        -not [long]::TryParse(
+            $lengthText,
+            [ref]$length
+        )
+    ) {
+        return
     }
 
 
     # -----------------------------------------------------------------------
-    # Current window counters.
+    # IP family.
     # -----------------------------------------------------------------------
 
-    [long]$windowV4In  = 0
-    [long]$windowV4Out = 0
-    [long]$windowV6In  = 0
-    [long]$windowV6Out = 0
+    $family = $null
+    $source = $null
+    $destination = $null
 
-    $talkers = @{}
+    if ($ipv4Source -and $ipv4Dest) {
+
+        $family = "IPv4"
+        $source = $ipv4Source
+        $destination = $ipv4Dest
+    }
+    elseif ($ipv6Source -and $ipv6Dest) {
+
+        $family = "IPv6"
+        $source = $ipv6Source
+        $destination = $ipv6Dest
+    }
+    else {
+        return
+    }
 
 
     # -----------------------------------------------------------------------
-    # Process packets.
+    # RX / TX direction.
     # -----------------------------------------------------------------------
 
-    foreach ($line in $output) {
+    $remote = $null
+    $direction = $null
 
-        if ([string]::IsNullOrWhiteSpace($line)) {
-            continue
-        }
+    if ($LocalAddresses.Contains($source)) {
 
-        # Regex.Split preserves empty tab-separated fields, which matters
-        # because IPv4 packets have empty IPv6 columns and vice versa.
+        $remote = $destination
+        $direction = "TX"
+    }
+    elseif ($LocalAddresses.Contains($destination)) {
 
-        $parts = [regex]::Split(
-            $line,
-            "`t"
-        )
+        $remote = $source
+        $direction = "RX"
+    }
+    else {
 
-        if ($parts.Count -lt 10) {
-            continue
-        }
-
-
-        # -------------------------------------------------------------------
-        # Extract TShark fields.
-        # -------------------------------------------------------------------
-
-        $lengthText = $parts[0]
-
-        $ipv4Source = $parts[1]
-        $ipv4Dest   = $parts[2]
-
-        $ipv6Source = $parts[3]
-        $ipv6Dest   = $parts[4]
-
-        $tcpSourcePort = $parts[5]
-        $tcpDestPort   = $parts[6]
-
-        $udpSourcePort = $parts[7]
-        $udpDestPort   = $parts[8]
-
-        $protocolStack = $parts[9]
+        return
+    }
 
 
-        # -------------------------------------------------------------------
-        # Frame length.
-        # -------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Traffic counters.
+    # -----------------------------------------------------------------------
 
-        [long]$length = 0
-
-        if (
-            -not [long]::TryParse(
-                $lengthText,
-                [ref]$length
-            )
-        ) {
-            continue
-        }
-
-
-        # -------------------------------------------------------------------
-        # Determine IP family.
-        # -------------------------------------------------------------------
-
-        $family = $null
-        $source = $null
-        $destination = $null
-
-        if ($ipv4Source -and $ipv4Dest) {
-
-            $family = "IPv4"
-            $source = $ipv4Source
-            $destination = $ipv4Dest
-        }
-        elseif ($ipv6Source -and $ipv6Dest) {
-
-            $family = "IPv6"
-            $source = $ipv6Source
-            $destination = $ipv6Dest
-        }
-        else {
-            continue
-        }
-
-
-        # -------------------------------------------------------------------
-        # Determine whether packet is RX or TX relative to this machine.
-        # -------------------------------------------------------------------
-
-        $remote = $null
-        $direction = $null
-
-        if ($localAddresses.Contains($source)) {
-
-            $remote = $destination
-            $direction = "TX"
-        }
-        elseif ($localAddresses.Contains($destination)) {
-
-            $remote = $source
-            $direction = "RX"
-        }
-        else {
-
-            # Packet does not directly belong to this host.
-            continue
-        }
-
-
-        # -------------------------------------------------------------------
-        # Update IPv4/IPv6 window and session counters.
-        # -------------------------------------------------------------------
-
-        if ($family -eq "IPv4") {
-
-            if ($direction -eq "RX") {
-
-                $windowV4In += $length
-                $totalV4In += $length
-            }
-            else {
-
-                $windowV4Out += $length
-                $totalV4Out += $length
-            }
-        }
-        else {
-
-            if ($direction -eq "RX") {
-
-                $windowV6In += $length
-                $totalV6In += $length
-            }
-            else {
-
-                $windowV6Out += $length
-                $totalV6Out += $length
-            }
-        }
-
-
-        # -------------------------------------------------------------------
-        # Determine transport and REMOTE port.
-        #
-        # TX:
-        #
-        #   destination port = remote port
-        #
-        # RX:
-        #
-        #   source port = remote port
-        # -------------------------------------------------------------------
-
-        $transport = "Other"
-        $remotePort = "-"
-
-        if ($tcpSourcePort -or $tcpDestPort) {
-
-            $transport = "TCP"
-
-            if ($direction -eq "TX") {
-                $remotePort = $tcpDestPort
-            }
-            else {
-                $remotePort = $tcpSourcePort
-            }
-        }
-        elseif ($udpSourcePort -or $udpDestPort) {
-
-            $transport = "UDP"
-
-            if ($direction -eq "TX") {
-                $remotePort = $udpDestPort
-            }
-            else {
-                $remotePort = $udpSourcePort
-            }
-
-            # Use TShark's actual protocol decoding.
-            if (
-                $protocolStack -match '(^|:)quic(:|$)'
-            ) {
-                $transport = "QUIC"
-            }
-        }
-
-        if (
-            [string]::IsNullOrWhiteSpace(
-                $remotePort
-            )
-        ) {
-            $remotePort = "-"
-        }
-
-
-        # -------------------------------------------------------------------
-        # Aggregate by:
-        #
-        #   family + remote IP + remote port + transport
-        #
-        # This means:
-        #
-        #   1.2.3.4:443 TCP
-        #
-        # and
-        #
-        #   1.2.3.4:443 QUIC
-        #
-        # remain separate rows.
-        # -------------------------------------------------------------------
-
-        $key =
-            "$family|$remote|$remotePort|$transport"
-
-        if (-not $talkers.ContainsKey($key)) {
-
-            $talkers[$key] = [PSCustomObject]@{
-                Family    = $family
-                Remote    = $remote
-                Port      = $remotePort
-                Transport = $transport
-                RX        = [long]0
-                TX        = [long]0
-            }
-        }
+    if ($family -eq "IPv4") {
 
         if ($direction -eq "RX") {
-            $talkers[$key].RX += $length
+
+            $Window.V4In += $length
+            $Session.V4In += $length
         }
         else {
-            $talkers[$key].TX += $length
+
+            $Window.V4Out += $length
+            $Session.V4Out += $length
+        }
+    }
+    else {
+
+        if ($direction -eq "RX") {
+
+            $Window.V6In += $length
+            $Session.V6In += $length
+        }
+        else {
+
+            $Window.V6Out += $length
+            $Session.V6Out += $length
         }
     }
 
 
-    # =======================================================================
-    # Calculate totals.
-    # =======================================================================
+    # -----------------------------------------------------------------------
+    # Transport + remote port.
+    # -----------------------------------------------------------------------
+
+    $transport = "Other"
+    $remotePort = "-"
+
+    if ($tcpSourcePort -or $tcpDestPort) {
+
+        $transport = "TCP"
+
+        if ($direction -eq "TX") {
+            $remotePort = $tcpDestPort
+        }
+        else {
+            $remotePort = $tcpSourcePort
+        }
+    }
+    elseif ($udpSourcePort -or $udpDestPort) {
+
+        $transport = "UDP"
+
+        if ($direction -eq "TX") {
+            $remotePort = $udpDestPort
+        }
+        else {
+            $remotePort = $udpSourcePort
+        }
+
+        if (
+            $protocolStack -match '(^|:)quic(:|$)'
+        ) {
+            $transport = "QUIC"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($remotePort)) {
+        $remotePort = "-"
+    }
+
+
+    # -----------------------------------------------------------------------
+    # Aggregate endpoint.
+    # -----------------------------------------------------------------------
+
+    $key =
+        "$family|$remote|$remotePort|$transport"
+
+    if (-not $Talkers.ContainsKey($key)) {
+
+        $Talkers[$key] = [PSCustomObject]@{
+            Family    = $family
+            Remote    = $remote
+            Port      = $remotePort
+            Transport = $transport
+            RX        = [long]0
+            TX        = [long]0
+        }
+    }
+
+    if ($direction -eq "RX") {
+        $Talkers[$key].RX += $length
+    }
+    else {
+        $Talkers[$key].TX += $length
+    }
+}
+
+
+# ---------------------------------------------------------------------------
+# Dashboard.
+# ---------------------------------------------------------------------------
+
+function Show-Dashboard {
+
+    param(
+        [hashtable]$Session,
+        [hashtable]$Window,
+        [hashtable]$Talkers,
+        [double]$ActualWindowSeconds
+    )
 
     $windowV4 =
-        $windowV4In +
-        $windowV4Out
+        $Window.V4In +
+        $Window.V4Out
 
     $windowV6 =
-        $windowV6In +
-        $windowV6Out
+        $Window.V6In +
+        $Window.V6Out
 
     $windowTotal =
         $windowV4 +
@@ -596,12 +540,12 @@ while ($true) {
 
 
     $sessionV4 =
-        $totalV4In +
-        $totalV4Out
+        $Session.V4In +
+        $Session.V4Out
 
     $sessionV6 =
-        $totalV6In +
-        $totalV6Out
+        $Session.V6In +
+        $Session.V6Out
 
     $sessionTotal =
         $sessionV4 +
@@ -624,18 +568,31 @@ while ($true) {
     }
 
 
-    # =======================================================================
-    # Display.
-    # =======================================================================
-
     Clear-Host
+
 
     Write-Host "=== REMOTE TRAFFIC TALKERS ===" `
         -ForegroundColor Yellow
 
     Write-Host "Interface: $InterfaceName"
     Write-Host "TShark interface: $interfaceNumber"
-    Write-Host "Capture window: $WindowSeconds seconds"
+
+    Write-Host (
+        "Capture mode: continuous | Display window: {0:N1} sec" -f `
+            $ActualWindowSeconds
+    )
+
+    Write-Host (
+        "Local IPv4: {0}" -f (
+            $ipv4Addresses -join ", "
+        )
+    ) -ForegroundColor DarkGray
+
+    Write-Host (
+        "Local IPv6: {0}" -f (
+            $ipv6Addresses -join ", "
+        )
+    ) -ForegroundColor DarkGray
 
     Write-Host ""
 
@@ -649,15 +606,16 @@ while ($true) {
 
     Write-Host (
         "IPv4 Download: {0,14} | IPv4 Upload: {1,14}" -f `
-            (Format-Bytes $totalV4In),
-            (Format-Bytes $totalV4Out)
+            (Format-Bytes $Session.V4In),
+            (Format-Bytes $Session.V4Out)
     ) -ForegroundColor Green
 
     Write-Host (
         "IPv6 Download: {0,14} | IPv6 Upload: {1,14}" -f `
-            (Format-Bytes $totalV6In),
-            (Format-Bytes $totalV6Out)
+            (Format-Bytes $Session.V6In),
+            (Format-Bytes $Session.V6Out)
     ) -ForegroundColor Magenta
+
 
     if ($sessionTotal -gt 0) {
 
@@ -678,25 +636,26 @@ while ($true) {
 
 
     # -----------------------------------------------------------------------
-    # Current capture window.
+    # Window totals.
     # -----------------------------------------------------------------------
 
     Write-Host (
-        "--- CURRENT {0} SECOND WINDOW ---" -f `
-            $WindowSeconds
+        "--- CURRENT {0:N1} SECOND WINDOW ---" -f `
+            $ActualWindowSeconds
     ) -ForegroundColor Cyan
 
     Write-Host (
         "IPv4 Download: {0,14} | IPv4 Upload: {1,14}" -f `
-            (Format-Bytes $windowV4In),
-            (Format-Bytes $windowV4Out)
+            (Format-Bytes $Window.V4In),
+            (Format-Bytes $Window.V4Out)
     ) -ForegroundColor Green
 
     Write-Host (
         "IPv6 Download: {0,14} | IPv6 Upload: {1,14}" -f `
-            (Format-Bytes $windowV6In),
-            (Format-Bytes $windowV6Out)
+            (Format-Bytes $Window.V6In),
+            (Format-Bytes $Window.V6Out)
     ) -ForegroundColor Magenta
+
 
     if ($windowTotal -gt 0) {
 
@@ -717,28 +676,28 @@ while ($true) {
 
 
     # -----------------------------------------------------------------------
-    # Top talkers.
+    # Talkers.
     # -----------------------------------------------------------------------
 
     $topTalkers = @(
-        $talkers.Values |
+        $Talkers.Values |
         Sort-Object {
             $_.RX + $_.TX
         } -Descending |
         Select-Object -First $Top
     )
 
+
     Write-Host "--- TOP REMOTE ENDPOINTS ---" `
         -ForegroundColor Cyan
+
 
     if ($topTalkers.Count -eq 0) {
 
         Write-Host "No matching traffic captured." `
             -ForegroundColor DarkGray
 
-        Write-Host ""
-
-        continue
+        return
     }
 
 
@@ -777,7 +736,7 @@ while ($true) {
             $talker.TX
 
         $hostname =
-            Resolve-RemoteName `
+            Get-RemoteName `
                 $talker.Remote
 
         $color =
@@ -798,7 +757,7 @@ while ($true) {
                 (Format-Bytes $talker.RX),
                 (Format-Bytes $talker.TX),
                 (Format-Bytes $total),
-                (Format-Speed $total $WindowSeconds),
+                (Format-Speed $total $ActualWindowSeconds),
                 $hostname
         ) -ForegroundColor $color
     }
@@ -807,6 +766,268 @@ while ($true) {
     Write-Host ""
 
     Write-Host (
-        "Next capture window starting... Ctrl+C to quit."
+        "TShark capture remains running continuously. Ctrl+C to quit."
     ) -ForegroundColor DarkGray
+}
+
+
+# ============================================================================
+# Start ONE persistent TShark process.
+# ============================================================================
+
+$startInfo =
+    [System.Diagnostics.ProcessStartInfo]::new()
+
+$startInfo.FileName = $tshark
+$startInfo.UseShellExecute = $false
+$startInfo.RedirectStandardOutput = $true
+$startInfo.RedirectStandardError = $true
+$startInfo.CreateNoWindow = $true
+
+
+# -l makes TShark flush packet output continuously.
+
+$tsharkArguments = @(
+    "-i", "$interfaceNumber",
+    "-n",
+    "-l",
+    "-f", "ip or ip6",
+    "-T", "fields",
+    "-E", "occurrence=f",
+    "-e", "frame.len",
+    "-e", "ip.src",
+    "-e", "ip.dst",
+    "-e", "ipv6.src",
+    "-e", "ipv6.dst",
+    "-e", "tcp.srcport",
+    "-e", "tcp.dstport",
+    "-e", "udp.srcport",
+    "-e", "udp.dstport",
+    "-e", "frame.protocols"
+)
+
+foreach ($argument in $tsharkArguments) {
+    [void]$startInfo.ArgumentList.Add($argument)
+}
+
+
+$process =
+    [System.Diagnostics.Process]::new()
+
+$process.StartInfo = $startInfo
+
+
+Write-Host ""
+Write-Host "Starting continuous TShark capture..." `
+    -ForegroundColor DarkGray
+
+
+if (-not $process.Start()) {
+
+    Write-Host "Could not start TShark." `
+        -ForegroundColor Red
+
+    exit 1
+}
+
+
+# Drain stderr asynchronously so its pipe can never fill and block TShark.
+$stderrTask =
+    $process.StandardError.ReadToEndAsync()
+
+
+# ---------------------------------------------------------------------------
+# Window timing.
+# ---------------------------------------------------------------------------
+
+$windowStartedAt =
+    [DateTimeOffset]::UtcNow
+
+$nextWindowAt =
+    $windowStartedAt.AddSeconds(
+        $WindowSeconds
+    )
+
+$readTask = $null
+
+$unexpectedExit = $false
+$exitCode = $null
+$stderrText = ""
+
+
+try {
+
+    while ($true) {
+
+        if ($process.HasExited) {
+
+            $unexpectedExit = $true
+            $exitCode = $process.ExitCode
+
+            break
+        }
+
+
+        # -------------------------------------------------------------------
+        # Always keep one asynchronous stdout read pending.
+        #
+        # We wait at most 200ms for a packet. This means that even if the
+        # network is completely idle, the dashboard window can still expire
+        # and redraw on time.
+        # -------------------------------------------------------------------
+
+        if ($null -eq $readTask) {
+
+            $readTask =
+                $process.StandardOutput.ReadLineAsync()
+        }
+
+
+        $now =
+            [DateTimeOffset]::UtcNow
+
+        $millisecondsUntilWindow =
+            ($nextWindowAt - $now).TotalMilliseconds
+
+        $waitMilliseconds =
+            [int][math]::Max(
+                1,
+                [math]::Min(
+                    200,
+                    $millisecondsUntilWindow
+                )
+            )
+
+
+        if ($readTask.Wait($waitMilliseconds)) {
+
+            $line =
+                $readTask.Result
+
+            $readTask = $null
+
+
+            # Null means stdout was closed.
+            if ($null -eq $line) {
+
+                if ($process.HasExited) {
+
+                    $unexpectedExit = $true
+                    $exitCode = $process.ExitCode
+                }
+
+                break
+            }
+
+
+            Process-CaptureLine `
+                -Line $line `
+                -LocalAddresses $localAddresses `
+                -Session $session `
+                -Window $window `
+                -Talkers $talkers
+        }
+
+
+        # -------------------------------------------------------------------
+        # Display interval expired.
+        #
+        # Important:
+        #
+        # We are NOT stopping TShark here.
+        #
+        # TShark remains alive and continues feeding stdout while we reset
+        # the PowerShell-side window counters.
+        # -------------------------------------------------------------------
+
+        $now =
+            [DateTimeOffset]::UtcNow
+
+
+        if ($now -ge $nextWindowAt) {
+
+            $actualWindowSeconds =
+                ($now - $windowStartedAt).TotalSeconds
+
+            if ($actualWindowSeconds -le 0) {
+                $actualWindowSeconds = $WindowSeconds
+            }
+
+
+            Show-Dashboard `
+                -Session $session `
+                -Window $window `
+                -Talkers $talkers `
+                -ActualWindowSeconds $actualWindowSeconds
+
+
+            # New reporting window.
+            #
+            # Session counters remain untouched.
+
+            $window = @{
+                V4In  = [long]0
+                V4Out = [long]0
+                V6In  = [long]0
+                V6Out = [long]0
+            }
+
+            $talkers = @{}
+
+
+            $windowStartedAt =
+                [DateTimeOffset]::UtcNow
+
+            $nextWindowAt =
+                $windowStartedAt.AddSeconds(
+                    $WindowSeconds
+                )
+        }
+    }
+}
+finally {
+
+    if (-not $process.HasExited) {
+
+        try {
+            $process.Kill($true)
+        }
+        catch {
+        }
+
+        try {
+            $process.WaitForExit()
+        }
+        catch {
+        }
+    }
+
+
+    try {
+
+        if ($stderrTask.IsCompleted) {
+            $stderrText = $stderrTask.Result
+        }
+    }
+    catch {
+    }
+
+
+    $process.Dispose()
+}
+
+
+if ($unexpectedExit) {
+
+    Write-Host ""
+    Write-Host (
+        "TShark exited unexpectedly with code $exitCode."
+    ) -ForegroundColor Red
+
+    if (-not [string]::IsNullOrWhiteSpace($stderrText)) {
+
+        Write-Host ""
+        Write-Host $stderrText `
+            -ForegroundColor DarkGray
+    }
 }

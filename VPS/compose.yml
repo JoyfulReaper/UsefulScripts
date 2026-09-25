@@ -265,6 +265,7 @@ services:
       GitActivity__AllowedRepositories__25: JoyfulReaper/vpn-landing
       GitActivity__AllowedRepositories__26: JoyfulReaper/ygglanding
       GitActivity__AllowedRepositories__27: JoyfulReaper/PlutoAdDetector
+      GitActivity__AllowedRepositories__28: JoyfulReaper/DN42Landing
 
       GitActivity__AllowedBranches__0: main
       GitActivity__AllowedBranches__1: master
@@ -507,6 +508,9 @@ services:
 
       EventSources__Sources__16__Name: missioncontrol-agent-molasses
       EventSources__Sources__16__ApiKey: ${MISSIONCONTROL_AGENT_MOLASSES_KEY}
+
+      EventSources__Sources__17__Name: dn42landing-production
+      EventSources__Sources__17__ApiKey: ${DN42LANDING_MISSION_CONTROL_KEY}
 
     depends_on:
       - nats

@@ -140,6 +140,173 @@ Some peers may also negotiate RFC 9234 BGP roles, for example:
 
 Only configure a role that matches the relationship agreed with the peer.
 
+## New Peer Template
+
+Use this as a starting point when adding another DN42 peer to Clanker.
+
+Replace every value in angle brackets before enabling anything.
+
+### 1. WireGuard
+
+Create:
+
+    /etc/wireguard/wg-dn42-<name>.conf
+
+Example:
+
+    [Interface]
+    PrivateKey = <LOCAL_PRIVATE_KEY>
+    ListenPort = <LOCAL_UDP_PORT>
+    Table = off
+
+    [Peer]
+    PublicKey = <PEER_PUBLIC_KEY>
+    Endpoint = <PEER_HOSTNAME_OR_IP>:<PEER_UDP_PORT>
+    PersistentKeepalive = 25
+    AllowedIPs = 172.20.0.0/14, 10.0.0.0/8, fd00::/8, fe80::/10
+
+If the peer specifies explicit link-local addresses, add the local address to
+the interface exactly as agreed.
+
+Example:
+
+    ip -6 addr add fe80::<LOCAL_LINK_LOCAL>/64 dev wg-dn42-<name>
+
+Prefer making required address setup persistent through the WireGuard or
+system networking configuration rather than relying on a manual command.
+
+Enable and start:
+
+    sudo systemctl enable --now wg-quick@wg-dn42-<name>
+
+Verify:
+
+    sudo wg show wg-dn42-<name>
+
+A recent WireGuard handshake proves only that the encrypted tunnel is alive.
+It does not prove that BGP, routing, or application traffic works.
+
+### 2. Firewall
+
+Allow the peer's WireGuard UDP port:
+
+    sudo ufw allow <LOCAL_UDP_PORT>/udp
+
+If the peer may initiate the BGP TCP connection toward Clanker, also allow
+TCP/179 specifically on the peer interface:
+
+    sudo ufw allow in on wg-dn42-<name> proto tcp to any port 179
+
+Do not expose TCP/179 globally unless there is a deliberate reason to do so.
+
+### 3. BIRD
+
+Create:
+
+    /etc/bird/peers/<name>.conf
+
+Example:
+
+    protocol bgp <protocol_name> from dnpeers {
+        description "<PEER_NAME> - AS<PEER_ASN>";
+
+        neighbor <PEER_LINK_LOCAL> % 'wg-dn42-<name>' as <PEER_ASN>;
+
+        ipv4 {
+            extended next hop on;
+        };
+    }
+
+If the interface scope is specified separately, this form may also be used:
+
+    protocol bgp <protocol_name> from dnpeers {
+        description "<PEER_NAME> - AS<PEER_ASN>";
+
+        neighbor <PEER_LINK_LOCAL> as <PEER_ASN>;
+        interface "wg-dn42-<name>";
+
+        ipv4 {
+            extended next hop on;
+        };
+    }
+
+When IPv6 link-local transport carries both IPv4 and IPv6 NLRI, IPv4 requires
+extended next-hop support.
+
+If an RFC 9234 BGP role has been explicitly agreed with the peer, add the
+appropriate role. Do not guess the relationship.
+
+Example:
+
+    local role customer;
+
+### 4. Validate Before Applying
+
+Check the BIRD configuration:
+
+    sudo bird -p -c /etc/bird/bird.conf
+
+If validation succeeds:
+
+    sudo birdc configure
+
+Check the session:
+
+    sudo birdc show protocols all <protocol_name>
+
+Expected healthy state:
+
+    BGP state: Established
+
+### 5. Verify Import and Export
+
+Check how many routes are learned:
+
+    sudo birdc show route protocol <protocol_name> count
+
+Check what Clanker exports:
+
+    sudo birdc show route export <protocol_name>
+
+Clanker's current stub policy should export only:
+
+    172.20.220.48/28
+    fdf0:e12c:5528::/48
+
+If third-party DN42 routes appear in the export unexpectedly, stop and inspect
+the routing policy before continuing.
+
+### 6. Verify the Data Plane
+
+Do not stop testing merely because BGP says `Established`.
+
+Check the actual route selected for a destination:
+
+    ip -4 route get <DN42_IPV4>
+
+or:
+
+    ip -6 route get <DN42_IPV6>
+
+Useful information includes:
+
+- selected interface
+- next hop
+- source address
+
+Then test actual traffic:
+
+    ping <DN42_IPV4>
+    ping -6 <DN42_IPV6>
+
+For TCP services:
+
+    nc -vz <DN42_IPV4> <PORT>
+    nc -6 -vz <DN42_IPV6> <PORT>
+
+A working BGP control plane does not guarantee that the remote service,
+firewall, return route, or host binding is working.
+
 ## WireGuard
 
 Use a dedicated WireGuard interface/key for each peer unless there is a good
@@ -227,6 +394,106 @@ attempts will work.
        sudo birdc show route export <peer>
 
 15. Check route counts and ROA filtering.
+
+## Registry, DNS and Routing Are Separate
+
+Do not treat DN42 registry state, DNS delegation and BGP routing as the same
+thing.
+
+A prefix can be:
+
+- correctly originated by BIRD
+- accepted by peers
+- visible in remote looking glasses
+- reachable over the DN42 data plane
+
+while a `.dn42` hostname still fails to resolve because its registry delegation
+has not been merged or propagated yet.
+
+Useful distinction:
+
+    BGP / ROA
+        Controls route origination, validation and reachability.
+
+    Registry DNS delegation
+        Controls whether names such as randomsteam.dn42 become discoverable
+        through normal DN42 recursive DNS.
+
+    Authoritative DNS
+        Controls the records served once delegation reaches the authoritative
+        server.
+
+    ACME
+        Depends on DNS visibility plus the configured challenge path.
+
+Example from Clanker:
+
+    randomsteam.dn42
+
+was already:
+
+- configured in NSD
+- serving the correct A/AAAA records locally
+- reachable over DN42 IPv4 and IPv6
+- exposing a working HTTP-01 challenge path
+
+but Burble's authoritative DN42 resolver still returned NXDOMAIN because the
+registry delegation PR had not yet merged.
+
+That blocked ACME issuance even though BGP and the web service were working.
+
+When debugging a `.dn42` service, test each layer independently rather than
+assuming one failure explains all of them.
+
+## Control Plane vs Data Plane
+
+When troubleshooting DN42, separate these layers:
+
+1. WireGuard tunnel
+2. BGP control plane
+3. Kernel routing table
+4. Actual packet/data path
+5. Remote service behavior
+
+Each layer can work while the next one is broken.
+
+Examples:
+
+- A recent WireGuard handshake only proves the encrypted tunnel is alive.
+- `BGP state: Established` proves the routing session is up.
+- A route visible in BIRD proves the control plane learned it.
+- `ip route get` shows what the kernel intends to do with traffic.
+- Only packet capture and real traffic tests prove what actually happens on the wire.
+
+Useful checks:
+
+    sudo wg show <interface>
+
+    sudo birdc show protocols all <peer>
+
+    sudo birdc show route all for <DN42-address>
+
+    ip -4 route get <DN42-IPv4>
+    ip -6 route get <DN42-IPv6>
+
+    sudo tcpdump -ni <interface> -vv host <DN42-address>
+
+A failed application connection does not automatically mean BGP or WireGuard is
+broken.
+
+For example, if SYN packets leave Clanker toward a DN42 service but no SYN-ACK,
+RST or ICMP response returns, the likely problem is farther downstream:
+
+- remote firewall
+- remote host/service binding
+- internal routing
+- service failure
+- source ACL
+- broken return path
+
+Likewise, a remote looking glass traceroute that shows `* * *` does not prove
+traffic never reached Clanker. Capture traffic locally while the remote test is
+running before drawing that conclusion.
 
 ## Troubleshooting
 

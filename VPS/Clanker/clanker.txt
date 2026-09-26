@@ -1,8 +1,8 @@
 CLANKER
 =======
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-25
-Updated through DN42/nginx/DNS/Unbound work at 2026-09-25 21:25 EDT.
+Snapshot date: 2026-09-26
+Updated through DN42/ACME/nginx/systemd cleanup at 2026-09-26.
 
 PURPOSE
 -------
@@ -907,20 +907,24 @@ Additional custom/local host-managed components known on Clanker include:
 
 Live socket inventory confirms active Yggdrasil and ygglanding processes.
 
-Legacy/custom unit files historically observed:
+Legacy host-unit cleanup completed 2026-09-26:
     happyecho.service
     happyfinger.service
     happygopher.service
     randomsteam.service
 
-Because those applications now run in Docker, any retained host-managed unit files
-should be classified as:
-    obsolete
-    disabled fallback
-    or intentionally retained
+All four were inactive/disabled legacy deployments whose current applications
+run in Docker. Their unit files were moved out of /etc/systemd/system into:
+    /etc/systemd/legacy-units/
+
+systemctl daemon-reload was run afterward.
+
+An old /opt/missioncontrol-agent.backup deployment snapshot dated 2026-09-20
+was removed after verifying the active /opt/missioncontrol-agent deployment was
+running.
 
 Health:
-    no failed systemd units at 2026-09-25 inventory.
+    no failed systemd units at 2026-09-26 cleanup.
 
 ===============================================================================
 11. SCHEDULED JOBS
@@ -972,20 +976,22 @@ User crontab:
 Service:
     /etc/systemd/system/cloudflared.service
 
-Current/historical startup style:
-    cloudflared tunnel run --token <token>
+Current startup style:
+    EnvironmentFile=/etc/cloudflared/cloudflared.env
+    ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+
+The tunnel token was removed from ExecStart on 2026-09-26 and moved to:
+    /etc/cloudflared/cloudflared.env
+
+Permissions:
+    root:root
+    0600
+
+cloudflared was restarted and successfully re-established the tunnel afterward.
 
 IMPORTANT:
-    The Cloudflare Tunnel token is secret-bearing configuration.
-
-Classification:
-    P0 SECRET
-
-Do not commit the token to a public repository.
-
-Future cleanup worth considering:
-    move the tunnel token into a root-owned 0600 EnvironmentFile rather than
-    embedding it directly in a unit file, if that has not already been changed.
+    The Cloudflare Tunnel token remains P0 secret-bearing configuration.
+    Do not commit /etc/cloudflared/cloudflared.env or its contents.
 
 ===============================================================================
 13. NGINX
@@ -1011,6 +1017,16 @@ DN42 virtual-host routing:
     kgivler.dn42      -> 127.0.0.1:5186 (DN42Landing)
     randomsteam.dn42  -> 127.0.0.1:5182 (RandomSteam)
 
+RandomSteam ACME HTTP-01 webroot:
+    /var/www/dn42-acme
+
+nginx serves:
+    /.well-known/acme-challenge/
+
+A test challenge token was verified over both:
+    172.20.220.50
+    fdf0:e12c:5528::10
+
 The exact /peering/request location is protected by an nginx limit_req zone at
 6 requests/minute per source with burst=2, nodelay, and HTTP 429 on rejection.
 
@@ -1025,8 +1041,21 @@ Current Yggdrasil HTTP/HTTPS listeners include addresses from:
     201:762f:80bd:20e1:20db:1239:19af:f25e
     301:762f:80bd:20e1::/64
 
-Enabled-site symlinks should be inventoried explicitly if exact restore fidelity is
-required.
+Enabled-site symlinks verified 2026-09-26:
+    dn42-web
+    git-ygg
+    kgivler-api-ygg
+    kgivler-ygg
+    steam-ygg
+
+Two stale *.bak files under sites-enabled were discovered to be live because
+nginx includes sites-enabled/*. They were moved out.
+
+Historical nginx backups now live under:
+    /etc/nginx/backup-configs/
+
+dn42-web.bak was also moved out of sites-available. nginx -t passed and nginx
+was reloaded after cleanup.
 
 ===============================================================================
 14. SSH
@@ -1274,29 +1303,40 @@ material.
 Yggdrasil-specific TLS is currently in active use.
 
 DN42 certificates / DN42 CA integration:
-    DNS/routing prerequisites are now working.
+    The official DN42 Root Authority CA is installed in Clanker's system trust
+    store.
 
-    Burble production ACME directory was successfully reached from Clanker:
+    Root CA:
+        CN=dn42 Root Authority CA
+        expires 2030-12-31
+
+    Burble production ACME directory:
         https://acme.burble.dn42/v1/dn42/acme/directory
 
-    Diagnostic curl with certificate verification intentionally disabled returned:
-        HTTP/2 200
+    Burble staging ACME directory:
+        https://acme.burble.dn42/v1/staging/acme/directory
 
-    The connection selected DN42 IPv6:
-        fd42:4242:2601:ac83::1
+    Normal TLS verification against Burble's ACME service succeeds.
 
-    The ACME endpoint certificate observed at this refresh:
-        subject CN=burble.dn42
-        issuer  CN=burble.dn42 staging ACME
-        SANs: burble.dn42, *.burble.dn42
-        expiry: 2026-10-17
+    Certbot:
+        4.0.0
 
-    IMPORTANT STOPPING POINT:
-        DN42 CA trust has NOT yet been installed into Clanker's system trust store.
-        No staging or production certificate has been requested for randomsteam.dn42.
-        nginx does NOT yet have a randomsteam.dn42 :443 DN42 listener.
+    RandomSteam HTTP-01 preparation:
+        webroot: /var/www/dn42-acme
+        nginx challenge path configured
+        test token verified over DN42 IPv4 and IPv6
 
-    This is intentionally a clean, working boundary for the next session.
+    A staging certificate request for randomsteam.dn42 was attempted.
+
+    It could not finalize because Burble's authoritative DN42 DNS currently
+    returns NXDOMAIN for randomsteam.dn42 while registry delegation PR #7412
+    remains unmerged.
+
+    Therefore:
+        local HTTP-01 plumbing is ready
+        no randomsteam.dn42 certificate exists yet
+        randomsteam.dn42 has no :443 DN42 nginx listener yet
+        staging issuance should be retried after registry delegation is visible
 
 ===============================================================================
 20. BACKUP ARCHITECTURE / POLICY

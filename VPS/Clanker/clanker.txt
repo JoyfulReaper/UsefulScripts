@@ -2,12 +2,14 @@ CLANKER
 =======
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-25
+Updated through DN42/nginx/DNS/Unbound work at 2026-09-25 21:25 EDT.
 
 PURPOSE
 -------
 Clanker is Kyle's primary always-on Ubuntu VPS. It currently acts as a mixed
 application host, protocol server, VPN/router, observability node, Yggdrasil
-overlay node, DN42 router, reverse-proxy host, and backup peer/storage node.
+overlay node, DN42 router, reverse-proxy host, authoritative DNS host, local
+recursive/caching resolver, and backup peer/storage node.
 
 This file is intended to answer:
 - What is Clanker?
@@ -265,6 +267,24 @@ Local interface:
 systemd unit:
     /etc/systemd/system/dn42-dummy.service
 
+Primary DN42 service address pair:
+    IPv4:
+        172.20.220.50
+
+    IPv6:
+        fdf0:e12c:5528::10
+
+    Current roles on this address pair:
+        TCP/UDP 53 -> NSD authoritative DNS
+        TCP/80     -> nginx shared DN42 HTTP ingress
+
+Candidate future recursive-resolver service address pair:
+    172.20.220.51
+    fdf0:e12c:5528::51
+
+    This pair is reserved/planned only. No public DN42 resolver is currently
+    listening there.
+
 Routing daemon:
     BIRD 2.18
 
@@ -424,6 +444,121 @@ ROA validation:
         ROA validation verifies the authorized route origin. It does not validate
         every ASN in the complete AS path and does not prevent every possible
         route leak or policy mistake.
+
+
+DN42 authoritative DNS / service ingress:
+    Authoritative server:
+        NSD 4.14.0
+
+    Service bindings:
+        172.20.220.50:53
+        [fdf0:e12c:5528::10]:53
+
+    Current authoritative zones:
+        kgivler.dn42
+        randomsteam.dn42
+
+    randomsteam.dn42 currently publishes:
+        A     172.20.220.50
+        AAAA  fdf0:e12c:5528::10
+
+    Direct authoritative A/AAAA queries were verified over both IPv4 and IPv6.
+
+    Registry delegation PR:
+        dn42/registry PR #7412
+
+    Status at this refresh:
+        pending maintainer merge
+
+    Local authoritative service works before registry merge; normal DN42 recursive
+    discovery depends on the registry delegation becoming visible.
+
+DN42 nginx ingress:
+    Config:
+        /etc/nginx/sites-available/dn42-web
+        /etc/nginx/sites-enabled/dn42-web -> ../sites-available/dn42-web
+
+    Shared listeners:
+        172.20.220.50:80
+        [fdf0:e12c:5528::10]:80
+
+    Virtual hosts:
+        kgivler.dn42
+            -> DN42Landing on 127.0.0.1:5186
+
+        randomsteam.dn42
+            -> RandomSteam on 127.0.0.1:5182
+            -> Blazor/SignalR WebSocket upgrade headers preserved
+
+    DN42Landing was intentionally moved off privileged/public :80 and now binds
+    only to 127.0.0.1:5186. CAP_NET_BIND_SERVICE was removed from its systemd
+    service because the application no longer needs a privileged port.
+
+    DN42Landing proxy trust:
+        X-Real-IP is trusted only when the immediate TCP peer is loopback.
+        Direct clients cannot spoof the logged remote address with X-Real-IP.
+
+    Real client preservation was verified from Molasses:
+        IPv4 remote seen by application: 172.20.220.59
+        IPv6 remote seen by application: fdf0:e12c:5528::59
+
+    Peering-request protection has two layers:
+        nginx per-source-IP limiter:
+            6 requests/minute average
+            burst 2
+            nodelay
+            excess -> HTTP 429
+
+        DN42Landing application limiter:
+            one valid peering submission globally per 15 minutes
+            invalid submissions do not consume the global slot
+
+    nginx limiter was verified from Molasses:
+        400, 400, 400, 429, 429, 429
+
+    HTTP routing was verified over DN42 IPv4 and IPv6 for both kgivler.dn42 and
+    randomsteam.dn42.
+
+Clanker local recursive DNS:
+    systemd-resolved remains the local application-facing stub resolver:
+        127.0.0.53
+
+    systemd-resolved drop-in:
+        /etc/systemd/resolved.conf.d/unbound.conf
+
+    Effective global resolver policy:
+        DNS=127.0.0.1
+        Domains=~.
+        FallbackDNS=
+
+    Unbound 1.24.2 listens only on loopback:
+        127.0.0.1:53
+        [::1]:53
+
+    It is NOT currently exposed through ens3, WireGuard, or DN42 and requires no
+    inbound firewall rule.
+
+    Unbound DN42 config:
+        /etc/unbound/unbound.conf.d/dn42.conf
+
+    Normal Internet names use Unbound recursion.
+
+    The dn42. zone is currently forwarded to DN42 recursive anycast resolvers:
+        172.20.0.53
+        fd42:d42:d42:54::1
+        172.23.0.53
+        fd42:d42:d42:53::1
+
+    dn42. is currently marked domain-insecure rather than using DN42 DNSSEC trust
+    anchors. DNSSEC-aware DN42 recursion may be revisited later.
+
+    Verified through ordinary libc/systemd-resolved lookups:
+        acme.burble.dn42
+        whois.dn42
+        google.com
+
+    This removed Clanker's previous dependency on Google DNS for all names and
+    allows normal applications on Clanker to resolve .dn42.
 
 Useful checks:
     sudo birdc show protocols
@@ -744,8 +879,18 @@ Important running host services at 2026-09-25 inventory include:
     missioncontrol-agent.service
         Mission Control Agent
 
+    dn42landing.service
+        DN42 landing page / peering request inbox
+        binds 127.0.0.1:5186 behind nginx
+
+    nsd.service
+        DN42 authoritative DNS on 172.20.220.50 / fdf0:e12c:5528::10
+
+    unbound.service
+        local recursive/caching DNS on loopback only
+
     nginx.service
-        reverse proxy / web server
+        reverse proxy / web server, including shared DN42 HTTP ingress
 
     ssh.service
         OpenSSH
@@ -854,6 +999,20 @@ Known Yggdrasil-oriented site configs:
     /etc/nginx/sites-available/kgivler-api-ygg
     /etc/nginx/sites-available/kgivler-ygg
     /etc/nginx/sites-available/steam-ygg
+
+DN42 site config:
+    /etc/nginx/sites-available/dn42-web
+
+DN42 HTTP listeners:
+    172.20.220.50:80
+    [fdf0:e12c:5528::10]:80
+
+DN42 virtual-host routing:
+    kgivler.dn42      -> 127.0.0.1:5186 (DN42Landing)
+    randomsteam.dn42  -> 127.0.0.1:5182 (RandomSteam)
+
+The exact /peering/request location is protected by an nginx limit_req zone at
+6 requests/minute per source with burst=2, nodelay, and HTTP 429 on rejection.
 
 Other standard nginx configuration:
     /etc/nginx/fastcgi.conf
@@ -1115,7 +1274,29 @@ material.
 Yggdrasil-specific TLS is currently in active use.
 
 DN42 certificates / DN42 CA integration:
-    not yet implemented at this snapshot.
+    DNS/routing prerequisites are now working.
+
+    Burble production ACME directory was successfully reached from Clanker:
+        https://acme.burble.dn42/v1/dn42/acme/directory
+
+    Diagnostic curl with certificate verification intentionally disabled returned:
+        HTTP/2 200
+
+    The connection selected DN42 IPv6:
+        fd42:4242:2601:ac83::1
+
+    The ACME endpoint certificate observed at this refresh:
+        subject CN=burble.dn42
+        issuer  CN=burble.dn42 staging ACME
+        SANs: burble.dn42, *.burble.dn42
+        expiry: 2026-10-17
+
+    IMPORTANT STOPPING POINT:
+        DN42 CA trust has NOT yet been installed into Clanker's system trust store.
+        No staging or production certificate has been requested for randomsteam.dn42.
+        nginx does NOT yet have a randomsteam.dn42 :443 DN42 listener.
+
+    This is intentionally a clean, working boundary for the next session.
 
 ===============================================================================
 20. BACKUP ARCHITECTURE / POLICY
@@ -1436,6 +1617,8 @@ Suggested high-level rebuild order:
        BIRD
        Yggdrasil
        nginx
+       NSD
+       Unbound
        cloudflared
        UFW
        certbot
@@ -1458,6 +1641,9 @@ Suggested high-level rebuild order:
        /etc/bird
        /etc/docker
        /etc/nginx
+       /etc/nsd
+       /etc/unbound
+       /etc/systemd/resolved.conf.d
        /etc/ufw
        /etc/sysctl.d
        /etc/systemd/system
@@ -1479,6 +1665,10 @@ Suggested high-level rebuild order:
        all intended BGP sessions
        own-prefix-only export policy
        no accidental transit
+       NSD authoritative answers on .50 / ::10
+       Unbound local recursion on 127.0.0.1 / ::1
+       systemd-resolved -> local Unbound
+       ordinary .dn42 resolution from Clanker
 
 13. Restore Compose/deployment trees.
 
@@ -1554,8 +1744,8 @@ Internet / public IPv4+IPv6
         |
         +-- DN42 / dn42-dummy
         |     AS4242420425
-        |     172.20.220.49/28
-        |     fdf0:e12c:5528::1/48
+        |     router: 172.20.220.49 / fdf0:e12c:5528::1
+        |     services: 172.20.220.50 / fdf0:e12c:5528::10
         |        |
         |        +-- wg-dn42-ewr1 -> RoutedBits AS4242420207
         |        |                       Established
@@ -1564,7 +1754,21 @@ Internet / public IPv4+IPv6
         |        |                       Established
         |        |
         |        +-- wg-dn42-hs1  -> HEADSCARF175 AS4242420842
-        |                                Established
+        |        |                       Established
+        |        |
+        |        +-- NSD :53 authoritative DNS
+        |        |     kgivler.dn42
+        |        |     randomsteam.dn42
+        |        |
+        |        +-- nginx :80 shared web ingress
+        |              kgivler.dn42     -> 127.0.0.1:5186 DN42Landing
+        |              randomsteam.dn42 -> 127.0.0.1:5182 RandomSteam
+        |
+        +-- systemd-resolved :127.0.0.53
+        |        |
+        |        +-- Unbound :127.0.0.1 / ::1 :53
+        |              +-- normal Internet recursion
+        |              +-- dn42. forwarding to DN42 recursive anycast
         |
         +-- nginx
         +-- cloudflared
@@ -1626,38 +1830,63 @@ Still worth checking, cleaning up or deciding:
 3. Decide whether Clanker should ever provide DN42 transit.
    Do not change the current own-prefix-only BIRD export filters casually.
 
-4. Build a DN42 landing page similar in spirit to YggLanding.
+4. DN42 landing/service-address work is now implemented:
+       DN42Landing is behind nginx on the shared service address pair.
+       RandomSteam HTTP routing works over DN42 IPv4 and IPv6.
 
-5. Assign stable DN42 addresses to selected services.
+5. Wait for / monitor dn42/registry DNS delegation PR #7412.
+   After merge, verify normal DN42 recursive discovery of:
+       kgivler.dn42
+       randomsteam.dn42
 
-6. Expose selected services on DN42, with RandomSteam a likely early target.
+6. Finish RandomSteam DN42 TLS:
+       install/trust the appropriate DN42 CA on Clanker
+       verify ACME without curl -k
+       use Burble staging ACME first
+       obtain a staging randomsteam.dn42 certificate
+       switch to production ACME
+       add nginx :443 for randomsteam.dn42
+       verify Blazor/SignalR over HTTPS
+       install the DN42 root CA on the workstation/browser for interactive use
 
-7. Investigate DN42 DNS / CA / TLS requirements before treating HTTPS service
-   naming as complete.
+7. Add reverse DNS later:
+       create local reverse zones/PTRs
+       submit reverse delegation changes separately after forward DNS is stable
 
-8. Review exact enabled nginx site symlinks and consolidate overlay-specific
-   nginx configuration where useful.
+8. Consider exposing Clanker's Unbound as a backup recursive resolver later.
+   Preferred progression:
+       localhost only (current)
+       then WireGuard-only if useful
+       optionally dedicated DN42 .51 / ::51 with strict ACL/UFW/rate limiting
 
-9. Classify/remove old host-managed Happy*/RandomSteam unit files if they are
-   truly obsolete.
+   Do NOT expose an unrestricted Internet-facing recursive resolver.
 
-10. Move the Cloudflare tunnel token out of the unit file if it is still embedded
+9. Consider DN42 DNSSEC trust anchors/full recursion later. The current dn42.
+   forwarding setup intentionally uses domain-insecure for simplicity.
+
+10. Review exact enabled nginx site symlinks and consolidate overlay-specific
+    nginx configuration where useful.
+
+11. Classify/remove old host-managed Happy*/RandomSteam unit files if they are
+    truly obsolete.
+
+12. Move the Cloudflare tunnel token out of the unit file if it is still embedded
     there.
 
-11. Investigate/fix the restic systemd cache warning:
+13. Investigate/fix the restic systemd cache warning:
         HOME/XDG_CACHE_HOME not defined
 
-12. Finish investigating the historical/questioned B2 maintenance/quota issue.
+14. Finish investigating the historical/questioned B2 maintenance/quota issue.
     Ordinary 2026-09-25 B2 snapshot upload was successful.
 
-13. Perform and document representative restore tests:
+15. Perform and document representative restore tests:
         Clanker peer backup from ScopeCreep
         Clanker B2 restore
         one peer repository hosted on Clanker
 
-14. Decide whether TCPNoise should remain intentionally manual.
+16. Decide whether TCPNoise should remain intentionally manual.
 
-15. Keep this dossier current when:
+17. Keep this dossier current when:
         a new overlay/peer is added
         backup topology changes
         major services move between host and Docker
@@ -1679,6 +1908,9 @@ Its current responsibilities include:
     - WireGuard hub connectivity
     - Yggdrasil overlay connectivity and hosted overlay services
     - DN42 routing as AS4242420425
+    - authoritative DN42 DNS via NSD
+    - local recursive/caching DNS via Unbound
+    - shared DN42 HTTP ingress for DN42Landing and RandomSteam
     - nginx / reverse proxying
     - Cloudflare Tunnel
     - peer backup storage for ScopeCreep and Molasses
@@ -1693,6 +1925,16 @@ Three BGP peers are Established:
 
 Clanker currently exports only its own registered DN42 prefixes and does not
 provide general transit.
+
+DN42 service hosting now uses 172.20.220.50 / fdf0:e12c:5528::10 for NSD and
+nginx. kgivler.dn42 and randomsteam.dn42 are authoritative locally, and
+RandomSteam HTTP has been verified over both DN42 IPv4 and IPv6. The registry DNS
+delegation PR is still pending, and RandomSteam DN42 HTTPS is intentionally the
+next-session task.
+
+Clanker now also uses local Unbound behind systemd-resolved. Normal Internet
+recursion and .dn42 forwarding both work through ordinary system resolver calls.
+Unbound remains loopback-only and is not exposed as an open resolver.
 
 Yggdrasil is also active with multiple healthy outbound peers and at least one
 inbound peer, with a routed /64 used for overlay-only services.
@@ -1713,7 +1955,10 @@ outside Clanker, especially:
 
 The main current cleanup/evolution items are:
     - finish reusable DN42 peering documentation
-    - build DN42 landing/services
+    - finish DN42 CA/ACME + HTTPS for randomsteam.dn42
+    - verify forward DNS after registry PR #7412 merges
+    - add DN42 reverse DNS later
+    - decide whether Clanker should expose a restricted backup recursive resolver
     - decide later whether to carry DN42 transit
     - remove stale Yggdrasil/legacy service configuration
     - finish B2 maintenance investigation

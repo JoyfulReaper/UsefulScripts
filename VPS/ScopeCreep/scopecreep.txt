@@ -1,13 +1,19 @@
 SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-23
+Snapshot date: 2026-09-27
+Updated through DN42 router/core/iBGP and secondary authoritative DNS deployment.
 
 PURPOSE
 -------
-ScopeCreep is Kyle's secondary always-on Debian VPS. It currently acts as a
-backup peer/storage host, monitoring-agent host, Docker utility host, WireGuard
-node, and secondary infrastructure box.
+ScopeCreep is Kyle's secondary always-on Debian VPS. It acts as a backup
+peer/storage host, monitoring-agent host, Docker utility host, WireGuard node,
+DN42 internal router, and secondary authoritative DN42 DNS server.
+
+ScopeCreep is now being developed as DN42 edge/router #2 for AS4242420425.
+It currently reaches the wider DN42 network through Clanker over a dedicated
+WireGuard core and iBGP. A direct external DN42 eBGP peer is the next major
+routing step.
 
 This file is intended to answer:
 - What is ScopeCreep?
@@ -16,9 +22,9 @@ This file is intended to answer:
 - Where is persistent data?
 - What backup responsibilities does it have?
 - Which secrets/configuration matter for recovery?
-- What network does it participate in?
+- What networks does it participate in?
 - What would be needed to rebuild it?
-- What have we NOT inventoried yet?
+- What have we not inventoried yet?
 
 It is deliberately broader than a backup manifest.
 
@@ -31,22 +37,19 @@ Hostname:
 
 Platform:
     Debian GNU/Linux 13 (trixie)
-    Kernel: Linux 6.12.107+deb13-amd64
+    Kernel previously inventoried: Linux 6.12.107+deb13-amd64
     Architecture: x86_64
     Virtualization: KVM / QEMU
 
-Storage:
-    Root filesystem: /dev/vda3
-    Filesystem: ext4
-    Size: ~35 GB
-    Used at inventory time: ~5.5 GB
-    Free at inventory time: ~28 GB
-    Usage: ~17%
+Storage previously inventoried:
+    Root:
+        /dev/vda3
+        ext4
+        ~35 GB
 
-Boot:
-    /boot/efi on /dev/vda2
-    FAT32
-    ~121 MB
+    /boot/efi:
+        /dev/vda2
+        FAT32
 
 Primary service managers:
     - systemd
@@ -65,33 +68,81 @@ Public IPv4:
 Public IPv4 gateway:
     173.249.205.1
 
-Public IPv6 addresses observed on eth0:
+Public IPv6 addresses previously observed on eth0:
     2607:9000:700:1063:b1ee:d:c0ff:ee/128
     2607:9000:700:1063::a/64
 
 Public IPv6 gateway:
     2607:9000:700:1000::1
 
-Primary WireGuard:
-    Interface: wg0
-    IPv4: 10.99.0.9/24
-    IPv6: fd42:42:42::9/64
+Primary private/homelab WireGuard:
+    Interface:
+        wg0
 
-    One peer routes:
-        10.99.0.0/24
-        fd42:42:42::/64
+    IPv4:
+        10.99.0.9/24
+
+    IPv6:
+        fd42:42:42::9/64
 
 Secondary WireGuard:
-    Interface: wg1
-    IPv4: 10.98.0.1/24
-    IPv6: fd42:42:43::1/64
+    Interface:
+        wg1
 
-    Observed peers:
+    IPv4:
+        10.98.0.1/24
+
+    IPv6:
+        fd42:42:43::1/64
+
+    Previously observed peers:
         10.98.0.2/32 + fd42:42:43::2/128
         10.98.0.3/32 + fd42:42:43::3/128
         10.98.0.4/32 + fd42:42:43::4/128
 
-    Peer identities/purposes were not inventoried in this snapshot.
+Dedicated DN42 router core:
+    Interface:
+        wg-dn42-core
+
+    ScopeCreep IPv4:
+        192.168.252.2/30
+
+    ScopeCreep IPv6 link-local:
+        fe80::425:2/64
+
+    Clanker IPv4:
+        192.168.252.1/30
+
+    Clanker IPv6 link-local:
+        fe80::425:1/64
+
+    UDP:
+        51822
+
+    Config:
+        /etc/wireguard/wg-dn42-core.conf
+
+    wg-quick:
+        wg-quick@wg-dn42-core.service
+        enabled
+        active
+
+DN42 loopback identities:
+    ns2/service:
+        172.20.220.51/32
+        fdf0:e12c:5528::51/128
+
+    router:
+        172.20.220.52/32
+        fdf0:e12c:5528::52/128
+
+Persistence:
+    /etc/systemd/system/dn42-loopback.service
+
+    Verified 2026-09-27:
+        enabled
+        active
+        all four addresses present on lo
 
 ===============================================================================
 3. ROUTING / FIREWALL
@@ -103,6 +154,12 @@ Default IPv4 route:
 Default IPv6 route:
     via 2607:9000:700:1000::1 on eth0
 
+IPv4 forwarding:
+    enabled
+
+IPv6 forwarding:
+    enabled
+
 UFW:
     enabled
 
@@ -112,255 +169,292 @@ Default policy:
     routed: deny
 
 SSH:
-    TCP/22 allowed from:
-        10.99.0.0/24
-        fd42:42:42::/64
+    TCP/22 allowed from private WireGuard ranges.
 
-WireGuard:
-    UDP/51821 allowed publicly.
+DN42 core:
+    UDP/51822 allowed publicly for wg-dn42-core.
 
-Other publicly allowed TCP ports observed:
-    21
-    23
-    80
-    443
-    420
-    2222
-    2323
-    3389
-    5432
-    8080
-    42069
+iBGP:
+    TCP/179 allowed on wg-dn42-core as required for Clanker.
 
-Port 45876/tcp is allowed on wg0.
+DNS:
+    ns2 listens on the dedicated .51 / ::51 addresses.
 
-Mission Control Agent API:
-    TCP/5194 is allowed on wg0 from 10.99.0.0/24.
-    The Agent listens on 10.99.0.9:5194 and is intended to be reachable only
-    across the primary WireGuard network.
+Clanker has narrow forwarded DNS rules from external DN42 peer interfaces to
+ScopeCreep:
+    172.20.220.51 TCP/UDP 53
+    fdf0:e12c:5528::51 TCP/UDP 53
 
-NOTE:
-    Firewall allowance does not prove that a service is currently listening on
-    each allowed port. This inventory did not capture the complete listening
-    socket table.
+General DN42 transit through ScopeCreep is not enabled.
 
 ===============================================================================
-4. DOCKER
+4. DN42
+===============================================================================
+
+Registry / AS:
+    AS4242420425
+
+ScopeCreep role:
+    internal DN42 router
+    secondary authoritative DNS
+    future edge/router #2
+
+Routing daemon:
+    BIRD 2.17.5
+
+Live BIRD protocols verified 2026-09-27:
+    clanker_core       Established
+    clanker_core_v6    Established
+    kernel_v4          up
+    kernel_v6          up
+    scopecreep_dn42_v4 Static up
+    scopecreep_dn42_v6 Static up
+
+Route table counts verified 2026-09-27:
+    master4:
+        1371 routes / 1371 networks
+
+    master6:
+        1320 routes / 1320 networks
+
+    total:
+        2691 routes / 2691 networks
+
+Control-plane design:
+    underlay:
+        wg-dn42-core
+
+    IPv4 iBGP:
+        ScopeCreep <-> Clanker over 192.168.252.0/30
+
+    IPv6 iBGP:
+        ScopeCreep <-> Clanker over fe80::425:1 / fe80::425:2
+
+ScopeCreep receives valid DN42 routes from Clanker.
+
+ScopeCreep currently originates only its intended local host identities toward
+Clanker:
+    172.20.220.51/32
+    172.20.220.52/32
+    fdf0:e12c:5528::51/128
+    fdf0:e12c:5528::52/128
+
+Clanker does not export these host routes to external peers. External DN42 sees
+only:
+    172.20.220.48/28
+    fdf0:e12c:5528::/48
+
+This preserves the external aggregate while still giving ScopeCreep precise
+internal routing.
+
+Current external-peering status:
+    ScopeCreep has no independent external DN42 eBGP peer yet.
+
+Next routing milestone:
+    establish at least one external DN42 peer directly on ScopeCreep, then design
+    failover/preference behavior between edge #1 and edge #2.
+
+===============================================================================
+5. AUTHORITATIVE DN42 DNS / NS2
+===============================================================================
+
+Software:
+    NSD 4.12.0
+
+Role:
+    secondary authoritative server
+
+Hostname:
+    ns2.kgivler.dn42
+
+Bindings:
+    172.20.220.51:53
+    [fdf0:e12c:5528::51]:53
+
+Primary:
+    ns1.kgivler.dn42
+    172.20.220.50
+    fdf0:e12c:5528::10
+    host: Clanker
+
+Secondary-zone model:
+    allow-notify from 172.20.220.50
+    AXFR from 172.20.220.50
+
+Current forward zones:
+    kgivler.dn42
+    randomsteam.dn42
+    joyfulreaper.dn42
+    randomgit.dn42
+
+Current reverse zones:
+    48/28.220.20.172.in-addr.arpa
+    8.2.5.5.c.2.1.e.0.f.d.f.ip6.arpa
+
+Observed serials:
+    kgivler.dn42       2026092603
+    randomsteam.dn42   2026092603
+    joyfulreaper.dn42  2026092602
+    randomgit.dn42     2026092602
+
+Direct authoritative SOA checks verified 2026-09-27:
+    from Clanker:
+        ns2 IPv4 success
+        ns2 IPv6 success
+
+    from Molasses:
+        ns2 IPv4 success
+        ns2 IPv6 success
+
+Reverse DNS served by the authoritative pair includes:
+    .49 -> clanker.kgivler.dn42.
+    .50 -> ns1.kgivler.dn42.
+    .51 -> ns2.kgivler.dn42.
+    .52 -> scopecreep.kgivler.dn42.
+
+    ::1  -> clanker.kgivler.dn42.
+    ::10 -> ns1.kgivler.dn42.
+    ::51 -> ns2.kgivler.dn42.
+    ::52 -> scopecreep.kgivler.dn42.
+
+Registry delegation:
+    dn42/registry PR #7412
+    pending at this snapshot
+
+===============================================================================
+6. DOCKER
 ===============================================================================
 
 Docker and containerd are enabled and running.
 
-Current Docker storage:
-    /var/lib/docker ~1.9 GB
+Current live Docker networks verified 2026-09-27:
 
-This is mostly regeneratable image/container/runtime state and should not be
-treated as primary backup data.
+    bridge:
+        192.168.128.0/24
 
-No Docker named volumes were present at inventory time.
+    dozzle-agent_default:
+        192.168.129.0/24
 
-Observed Docker networks:
-    bridge                  172.17.0.0/16
-    dockge_default          172.19.0.0/16
-    dozzle-agent_default    172.20.0.0/16
-    rest-server_default     172.18.0.0/16
+    dockge_default:
+        172.19.0.0/16
 
-IMPORTANT DN42 NOTE:
-    Docker currently uses 172.20.0.0/16 for dozzle-agent_default.
+    rest-server_default:
+        172.18.0.0/16
 
-    DN42 uses 172.20.0.0/14.
+    host:
+        no subnet
 
-    ScopeCreep is not currently being used as a DN42 router, so this is not an
-    active problem. If ScopeCreep ever participates in DN42 routing, Docker's
-    address pools must be moved away from 172.20.0.0/14 first, similar to the
-    cleanup already performed on Clanker.
+    none:
+        no subnet
+
+DN42 collision status:
+    RESOLVED.
+
+The old ScopeCreep inventory showed:
+    dozzle-agent_default 172.20.0.0/16
+
+That overlapped DN42's 172.20.0.0/14 and had to be removed before ScopeCreep
+could safely participate in DN42 routing.
+
+Current automatic Docker networking is outside DN42 space.
+
+Do not create future Docker networks inside:
+    172.20.0.0/14
 
 ===============================================================================
-5. DOCKER COMPOSE PROJECTS
+7. DOCKER COMPOSE PROJECTS / SERVICES
 ===============================================================================
 
-Current Compose projects:
+Known Compose projects:
 
 1. beszel-agent
-   Config:
-       /opt/stacks/beszel-agent/compose.yaml
+    /opt/stacks/beszel-agent/compose.yaml
 
 2. dockge
-   Config:
-       /opt/dockge/compose.yml
+    /opt/dockge/compose.yml
 
 3. dozzle-agent
-   Config:
-       /opt/stacks/dozzle-agent/compose.yaml
+    /opt/stacks/dozzle-agent/compose.yaml
 
 4. rest-server
-   Config:
-       /opt/stacks/rest-server/compose.yaml
-
-===============================================================================
-6. DOCKER SERVICES
-===============================================================================
+    /opt/stacks/rest-server/compose.yaml
 
 rest-server:
-    Image:
-        restic/rest-server:latest
-
-    Published endpoint:
-        10.99.0.9:8000 -> container TCP/8000
-
-    Persistent bind mount:
-        /var/lib/restic -> /data
+    10.99.0.9:8000
+    persistent data:
+        /var/lib/restic
 
     Purpose:
-        Restic repository server.
+        peer restic repository server, including Clanker's peer backup
 
-    At inventory time /var/lib/restic used ~136 MB.
+Dockge:
+    10.99.0.9:5001
 
-beszel-agent:
-    Image:
-        henrygd/beszel-agent:latest
+Dozzle agent:
+    10.99.0.9:7007
 
-    Persistent bind mount:
-        /opt/stacks/beszel-agent/beszel_agent_data
-            -> /var/lib/beszel-agent
-
-    Other mount:
-        /var/run/docker.sock
-
-    Persistent data size at inventory:
-        ~4 KB
-
-dozzle-agent:
-    Image:
-        amir20/dozzle:latest
-
-    Published endpoint:
-        10.99.0.9:7007 -> container TCP/7007
-
-    Mount:
-        /var/run/docker.sock
-
-    No application data mount was observed.
-
-dockge:
-    Image:
-        louislam/dockge:1
-
-    Published endpoint:
-        10.99.0.9:5001 -> container TCP/5001
-
-    Persistent/configuration mounts:
-        /opt/stacks -> /opt/stacks
-        /opt/dockge/data -> /app/data
-
-    Other mount:
-        /var/run/docker.sock
-
-    Dockge data size at inventory:
-        ~88 KB
+Beszel agent:
+    TCP/45876
+    canonical deployment:
+        Docker Compose
 
 ===============================================================================
-7. HOST-MANAGED SYSTEMD SERVICES
+8. HOST-MANAGED SYSTEMD SERVICES
 ===============================================================================
 
-Important running services observed:
-
+Important services include:
+    bird.service
+    nsd.service
+    wg-quick@wg-dn42-core.service
+    dn42-loopback.service
     cloudflared.service
     containerd.service
     docker.service
     missioncontrol-agent.service
     ssh.service
-    qemu-guest-agent.service
-    systemd-timesyncd.service
     cron.service
 
-Mission Control Agent:
-    Service:
-        missioncontrol-agent.service
+DN42 persistence verified 2026-09-27:
 
-    Deployment:
-        systemd-managed host process
-        WorkingDirectory=/opt/missioncontrol-agent
-        ExecStart=/opt/missioncontrol-agent/MissionControl.Agent
+    bird.service:
+        enabled
+        active
+
+    nsd.service:
+        enabled
+        active
+
+    dn42-loopback.service:
+        enabled
+        active
+
+    wg-quick@wg-dn42-core.service:
+        enabled
+        active
+
+Mission Control Agent:
+    host-managed systemd process
 
     Runtime API:
         http://10.99.0.9:5194
-        /health/live
-        /api/snapshot
 
     Identity:
         NodeId: scopecreep
         Display name: ScopeCreep
 
-    Docker access:
-        The service runs as missioncontrol-agent and receives the docker
-        supplementary group so it can collect container metrics.
+    Gateway:
+        http://10.99.0.1:5190
 
-    Configuration:
-        Base application files live under /opt/missioncontrol-agent.
-        Runtime environment overrides live in:
-            /etc/missioncontrol-agent.env
+    Runtime environment:
+        /etc/missioncontrol-agent.env
 
-        The systemd unit loads that file through:
-            /etc/systemd/system/missioncontrol-agent.service.d/override.conf
+    EnvironmentFile drop-in:
+        /etc/systemd/system/missioncontrol-agent.service.d/override.conf
 
-        The drop-in must contain:
-            [Service]
-            EnvironmentFile=/etc/missioncontrol-agent.env
-
-        This EnvironmentFile directive is required. On 2026-09-23 the env file
-        existed but the service did not load it, causing the Agent to fall back
-        to appsettings.json where Mission Control publishing was disabled.
-
-    Central publication:
-        Enabled through environment overrides.
-        Gateway: http://10.99.0.1:5190
-        ScopeCreep has its own Mission Control event-source API key.
-        The key is secret and must not be committed to this repository.
-
-        Successful publication to the central Gateway was verified on
-        2026-09-23; /api/snapshot reported:
-            missionControlPublishSucceeded: true
-
-    Firewall:
-        UFW allows TCP/5194 on wg0 only from 10.99.0.0/24.
-
-Legacy Beszel host deployment:
-    The older host-managed Beszel agent was disabled on 2026-09-22 after
-    confirming that the Docker Compose agent remained active on TCP/45876 and
-    continued accepting connections from the Beszel hub on Clanker.
-
-    Disabled units:
-        beszel-agent.service
-        beszel-agent-update.timer
-
-    Legacy files/state still present:
-        /opt/beszel-agent
-        /var/lib/beszel-agent
-
-    These may be removed after the Docker deployment has remained healthy for
-    a reasonable period.
-
-Custom/local systemd units observed:
-
-    /etc/systemd/system/beszel-agent.service
-    /etc/systemd/system/beszel-agent-update.service
-    /etc/systemd/system/beszel-agent-update.timer
-
-    /etc/systemd/system/cloudflared.service
-    /etc/systemd/system/cloudflared-update.service
-    /etc/systemd/system/cloudflared-update.timer
-
-    /etc/systemd/system/missioncontrol-agent.service
-    /etc/systemd/system/missioncontrol-agent.service.d/override.conf
-
-    /etc/systemd/system/vps-backup.service
-    /etc/systemd/system/vps-backup.timer
-
-    /etc/systemd/system/clanker-backup-maintenance.service
-    /etc/systemd/system/clanker-backup-maintenance.timer
+Secret-bearing environment files must not be committed publicly.
 
 ===============================================================================
-8. SCHEDULED JOBS
+9. SCHEDULED JOBS
 ===============================================================================
 
 ScopeCreep backup:
@@ -371,13 +465,7 @@ ScopeCreep backup:
         RandomizedDelaySec=15m
         Persistent=true
 
-    Service:
-        vps-backup.service
-
-    Entry point:
-        /usr/local/sbin/vps-backup
-
-Clanker backup repository maintenance:
+Clanker repository maintenance:
     clanker-backup-maintenance.timer
 
     Schedule:
@@ -385,27 +473,10 @@ Clanker backup repository maintenance:
         RandomizedDelaySec=15m
         Persistent=true
 
-    Service:
-        clanker-backup-maintenance.service
-
-    Entry point:
-        /usr/local/sbin/clanker-backup-maintenance
-
-Other observed timers include:
-    apt-daily
-    apt-daily-upgrade
-    dpkg-db-backup
-    logrotate
-    fstrim
-    e2scrub_all
-    systemd-tmpfiles-clean
-
-Disabled legacy timer:
-    beszel-agent-update.timer
-        Disabled 2026-09-22 with the old host-managed Beszel deployment.
+Legacy host-managed Beszel updater remains disabled.
 
 ===============================================================================
-9. USEFULSCRIPTS DEPLOYMENT
+10. USEFULSCRIPTS DEPLOYMENT
 ===============================================================================
 
 Operational scripts are symlinked from /usr/local/sbin into the UsefulScripts
@@ -419,345 +490,110 @@ Clanker repository maintenance:
     /usr/local/sbin/clanker-backup-maintenance
         -> /home/joyfulreaper/UsefulScripts/VPS/Backup/ScopeCreep/clanker-repo-maintenance.sh
 
-This means the UsefulScripts checkout is part of the operational configuration
-of ScopeCreep and should be restored/cloned before these units can work normally.
+The UsefulScripts checkout is therefore part of operational recovery.
 
 ===============================================================================
-10. SCOPECREEP BACKUP ARCHITECTURE
+11. BACKUP ARCHITECTURE
 ===============================================================================
 
-ScopeCreep backs itself up to Clanker over the WireGuard network using restic.
+ScopeCreep backs itself up to Clanker over the private WireGuard network.
 
 Destination:
     rest:http://10.99.0.1:8000/scopecreep/
 
-Restic snapshot metadata:
-    host: scopecreep
-    tags:
-        scopecreep
-        peer
-
-Backup staging root:
-    /var/lib/vps-backup/staging
-
-The script:
-    - requires root
-    - prevents overlapping runs with flock
-    - validates peer repository connectivity
-    - stages a recovery tree
-    - creates a recovery manifest
-    - snapshots SQLite safely
-    - sends the staged tree to Clanker using restic
-    - sends success/failure notification through ntfy
-    - removes staging data on exit
-
-ntfy endpoint:
-    http://10.99.0.1:5197/vps-backups
-
-===============================================================================
-11. SCOPECREEP BACKUP CONTENT
-===============================================================================
-
-The backup stages most of /etc, excluding:
-    /etc/vps-backup/
-
-Application/configuration paths explicitly included:
-    /home/joyfulreaper/.ssh
-    /opt/stacks
-    /opt/dockge
-    /opt/beszel-agent
-    /var/lib/beszel-agent
-    /var/lib/restic/.htpasswd
-
-Mission Control recovery note:
-    /etc/missioncontrol-agent.env and the Mission Control systemd unit/drop-in
-    are covered by the general /etc staging unless excluded by a future backup
-    change. The env file is secret-bearing and must never be committed publicly.
-
-    /opt/missioncontrol-agent is NOT explicitly included in the current backup
-    list. It contains reproducible deployed binaries and should be republished
-    from the MissionControl repository during a rebuild unless backup policy is
-    intentionally expanded later.
-
-NOTE:
-    /opt/beszel-agent and /var/lib/beszel-agent belong to the now-disabled
-    legacy host-managed Beszel deployment. They remain in the current backup
-    script as of this inventory and can be removed from backup scope once the
-    old deployment is intentionally deleted.
-
-IMPORTANT:
-    The Clanker restic repository beneath /var/lib/restic is intentionally NOT
-    included in ScopeCreep's own backup.
-
-Dockge SQLite:
-    Source:
-        /opt/dockge/data/dockge.db
-
-    The backup script uses SQLite's .backup command and verifies the resulting
-    database with PRAGMA quick_check rather than copying the live DB blindly.
-
-Recovery manifest generated during each backup includes:
-    host/platform information
-    filesystems
-    block devices
-    IP addresses
-    IPv4 routes
-    IPv6 routes
-    WireGuard state
-    Docker containers
-    Docker Compose projects
-    Docker volumes
-    Docker networks
-    enabled systemd units
-    listening sockets
-    installed package versions
-    root crontab
-    joyfulreaper crontab
-
-===============================================================================
-12. BACKUP SECRETS / OUT-OF-BAND RECOVERY REQUIREMENTS
-===============================================================================
-
-The backup deliberately excludes /etc/vps-backup.
-
-Important files referenced by the backup system include:
-
-    /etc/vps-backup/peer.env
-    /etc/vps-backup/peer-repository-password
-    /etc/vps-backup/ntfy.env
-    /etc/vps-backup/clanker-repository-password
-
-These are secrets or secret-bearing configuration and must NOT be committed to
-the public UsefulScripts repository.
-
-Because /etc/vps-backup is excluded from ScopeCreep's peer backup, these files
-must be preserved through a separate secure/out-of-band recovery mechanism.
-
-This is a P0 restore dependency.
-
-===============================================================================
-13. CLANKER BACKUP STORAGE RESPONSIBILITY
-===============================================================================
-
-ScopeCreep hosts Clanker's peer restic repository.
-
-Repository:
+ScopeCreep also hosts Clanker's peer restic repository:
     /var/lib/restic/clanker
 
-Authentication metadata:
-    /var/lib/restic/.htpasswd
+Backup staging:
+    /var/lib/vps-backup/staging
 
-Repository password file:
-    /etc/vps-backup/clanker-repository-password
+Secret files:
+    /etc/vps-backup/
 
-Weekly maintenance performs:
-    restic unlock
-    restic forget --keep-within 30d --prune
-    restic check
+These are intentionally excluded from the normal peer backup and must be
+preserved out-of-band.
 
-Maintenance also reports:
-    repository size before maintenance
-    repository size after maintenance
-    ScopeCreep root free space / usage
-    runtime
-    success/failure through ntfy
-
-At inventory time:
-    /var/lib/restic total size: ~136 MB
-
-===============================================================================
-14. PERSISTENT APPLICATION DATA
-===============================================================================
-
-Backup-critical or rebuild-relevant paths identified:
-
-P0 / secrets or access:
-    /etc/vps-backup/*
-        NOT included in ScopeCreep's own restic snapshot.
-        Must be preserved separately.
-
-    WireGuard configuration under /etc/wireguard
-        Included indirectly through the /etc backup unless excluded elsewhere.
-
-    Cloudflared configuration/credentials
-        Exact location not yet inventoried.
-        Review before declaring restore coverage complete.
-
-P1 / important persistent application state:
-    /var/lib/restic
-        Hosts restic repository data, including Clanker's repository.
-
-    /opt/dockge/data
-        Dockge SQLite/state.
-
-    /opt/stacks
-        Compose configuration managed by Dockge.
-
-    /opt/stacks/beszel-agent/beszel_agent_data
-        Beszel agent data.
-
-    /etc/missioncontrol-agent.env
-        Secret-bearing Mission Control Agent runtime configuration, including
-        the per-node publishing credential. Covered by the general /etc backup.
-
-Legacy / no longer backup-critical:
-    /opt/beszel-agent
-    /var/lib/beszel-agent
-
-        These belong to the disabled host-managed Beszel deployment and may be
-        removed after confirming the Docker agent remains healthy.
-
-P2 / useful but reproducible:
-    /home/joyfulreaper/UsefulScripts
-        Operational source checkout.
-        Re-clonable from GitHub but required for symlinked backup entry points.
-
-    /opt/missioncontrol-agent
-        Published Mission Control Agent binaries. Reproducible from the
-        MissionControl repository and not explicitly backed up today.
-
-Regeneratable / normally do not back up:
-    /var/lib/docker
-    /var/lib/containerd
-    Docker images
-    Docker writable layers
-    Docker build cache
-
-===============================================================================
-15. KNOWN DATABASES
-===============================================================================
-
-Dockge:
-    /opt/dockge/data/dockge.db
-
-Backup behavior:
-    Captured with SQLite .backup
-    Verified with PRAGMA quick_check
-
-No other SQLite/database files were positively identified during this inventory.
-
-===============================================================================
-16. DOCKER NAMED VOLUMES
-===============================================================================
-
-None observed at inventory time.
-
-All currently identified persistent Docker application state is bind-mounted.
-
-===============================================================================
-17. CLOUDFLARED
-===============================================================================
-
-cloudflared.service is enabled/running.
-
-cloudflared-update.service and cloudflared-update.timer also exist.
-
-The exact Cloudflare Tunnel startup arguments, credential location, ingress
-configuration, and secret-handling method were NOT inventoried in this pass.
-
-Do not dump cloudflared service environment or token-bearing configuration into
-this public file.
-
-===============================================================================
-18. BESZEL
-===============================================================================
-
-Canonical deployment:
-    Docker Compose
-
-Compose config:
-    /opt/stacks/beszel-agent/compose.yaml
-
-Container:
-    beszel-agent
-
-Network mode:
-    host
-
-Listener:
-    TCP/45876
-
-Persistent data:
-    /opt/stacks/beszel-agent/beszel_agent_data
-
-Verification performed 2026-09-22:
-    - Docker beszel-agent remained running after disabling the host service.
-    - Docker agent continued listening on TCP/45876.
-    - Docker logs showed successful SSH connections from 10.99.0.1 (Clanker).
-
-Legacy host deployment:
-    /opt/beszel-agent
-    /var/lib/beszel-agent
-    beszel-agent.service
-    beszel-agent-update.service
-    beszel-agent-update.timer
-
-    beszel-agent.service and beszel-agent-update.timer were disabled on
-    2026-09-22.
-
-===============================================================================
-19. BACKUP PRIORITY MODEL
-===============================================================================
-
-P0 - required to regain access / decrypt / reconnect:
-    /etc/vps-backup/*
-    WireGuard private configuration
-    Cloudflare tunnel credentials/configuration if ScopeCreep still depends on it
-    SSH access material as appropriate
-
-P1 - important persistent state:
+Important persistent/rebuild-relevant data:
     /var/lib/restic
     /opt/dockge/data
     /opt/stacks
-    Beszel state if still used
+    /opt/stacks/beszel-agent/beszel_agent_data
     /etc/missioncontrol-agent.env
+    /etc/wireguard
+    /etc/bird
+    /etc/nsd
+    /etc/systemd/system
 
-P2 - useful configuration / convenience:
-    UsefulScripts checkout
-    Mission Control Agent published binaries
-    package manifest
-    systemd manifests
-    recovery inventory
-    logs needed for troubleshooting
-
-P3 - regenerate instead:
-    /var/lib/docker
-    /var/lib/containerd
-    Docker images/layers/cache
-    package caches
+The new DN42 configuration is covered by normal /etc backup except for any
+out-of-band secrets excluded by policy.
 
 ===============================================================================
-20. RESTORE ORDER
+12. SECURITY / ACCESS
+===============================================================================
+
+UFW:
+    enabled
+    incoming deny
+    outgoing allow
+    routed deny
+
+SSH:
+    private WireGuard scoped
+
+DN42:
+    iBGP limited to wg-dn42-core
+    authoritative DNS intentionally reachable on .51 / ::51
+    general forwarded transit not enabled
+
+Secret-bearing files under /etc/vps-backup and other private credentials must
+never be committed publicly.
+
+===============================================================================
+13. RESTORE ORDER
 ===============================================================================
 
 Suggested high-level rebuild order:
 
-1. Provision Debian 13 or a compatible successor.
+1. Provision Debian 13 or compatible successor.
 2. Restore SSH/admin access.
-3. Restore network configuration and WireGuard.
-4. Install Docker / Docker Compose.
-5. Clone UsefulScripts into:
-       /home/joyfulreaper/UsefulScripts
-6. Restore the out-of-band /etc/vps-backup secret files.
-7. Restore /opt/stacks and /opt/dockge.
-8. Restore /var/lib/restic before bringing rest-server into production use.
-9. Restore Dockge database/state.
-10. Recreate/start Docker Compose projects.
-11. Restore/validate cloudflared if still required.
-12. Republish/deploy Mission Control Agent to /opt/missioncontrol-agent.
-13. Restore/verify missioncontrol-agent.service and its EnvironmentFile drop-in.
-14. Verify the Agent listens only on the intended WireGuard address/port.
-15. Verify /api/snapshot reports the stable NodeId `scopecreep` and successful
-    central Mission Control publication.
-16. Verify the Docker Compose Beszel agent is healthy and reachable from Clanker.
-17. Enable backup and maintenance timers.
-18. Verify ScopeCreep can back itself up to Clanker.
-19. Verify Clanker's restic repository is readable on ScopeCreep.
-20. Run restic check against the Clanker repository.
-21. Verify ntfy backup notifications.
+3. Restore public networking.
+4. Install WireGuard, BIRD, NSD, Docker/Compose, UFW, and required utilities.
+5. Restore private wg0 and other required WireGuard configuration.
+6. Restore wg-dn42-core configuration.
+7. Enable/start:
+       wg-quick@wg-dn42-core
+8. Verify:
+       192.168.252.2/30
+       fe80::425:2/64
+       Clanker core reachability
+9. Restore:
+       /etc/systemd/system/dn42-loopback.service
+10. Enable/start dn42-loopback.service.
+11. Verify loopback:
+       172.20.220.51/32
+       172.20.220.52/32
+       fdf0:e12c:5528::51/128
+       fdf0:e12c:5528::52/128
+12. Restore BIRD configuration and start bird.service.
+13. Verify:
+       clanker_core Established
+       clanker_core_v6 Established
+       DN42 route tables populated
+       only intended local /32 and /128 routes originate toward Clanker
+14. Restore NSD configuration and start nsd.service.
+15. Verify AXFR/NOTIFY from Clanker.
+16. Verify authoritative answers over .51 and ::51.
+17. Restore Docker / Compose projects.
+18. Restore /var/lib/restic before exposing rest-server.
+19. Restore Dockge/Beszel state.
+20. Republish Mission Control Agent and restore its EnvironmentFile.
+21. Restore backup timers and out-of-band backup secrets.
+22. Verify ScopeCreep self-backup to Clanker.
+23. Verify Clanker's repository hosted on ScopeCreep.
+24. Perform representative restore tests.
 
 ===============================================================================
-21. CURRENT HIGH-LEVEL SERVICE MAP
+14. CURRENT HIGH-LEVEL SERVICE MAP
 ===============================================================================
 
 Internet
@@ -772,93 +608,85 @@ ScopeCreep
    |     10.99.0.9
    |     fd42:42:42::9
    |        |
-   |        +-- homelab / Clanker WireGuard network
-   |        |
-   |        +-- Mission Control Agent API
-   |               10.99.0.9:5194
-   |               publishes -> Clanker 10.99.0.1:5190
+   |        +-- private infrastructure / backup / Mission Control
    |
    +-- wg1
    |     10.98.0.1
    |     fd42:42:43::1
+   |
+   +-- wg-dn42-core
+   |     192.168.252.2/30
+   |     fe80::425:2/64
    |        |
-   |        +-- secondary WireGuard peers (.2 / .3 / .4)
+   |        +-- iBGP -> Clanker
+   |             192.168.252.1
+   |             fe80::425:1
+   |             AS4242420425 edge #1
+   |
+   +-- lo DN42 identities
+   |     172.20.220.51  ns2
+   |     172.20.220.52  router
+   |     ::51           ns2
+   |     ::52           router
+   |
+   +-- NSD secondary authoritative DNS
+   |
+   +-- BIRD 2.17.5
+   |     full DN42 routes from Clanker
    |
    +-- Docker
-         |
          +-- rest-server
-         |      10.99.0.9:8000
-         |      /var/lib/restic
-         |
          +-- dockge
-         |      10.99.0.9:5001
-         |
          +-- dozzle-agent
-         |      10.99.0.9:7007
-         |
          +-- beszel-agent
 
 Backup relationship:
 
     ScopeCreep -----------------------> Clanker
       self backup                        rest-server
-      restic over WireGuard              /scopecreep/
 
     Clanker --------------------------> ScopeCreep
       peer backup                        rest-server
-                                         /clanker/
 
 ===============================================================================
-22. INVENTORY GAPS / NEXT ACTIONS
+15. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
-Still worth checking later:
+1. Obtain a direct external DN42 eBGP peer on ScopeCreep.
 
-1. After the Docker Beszel agent has remained healthy, remove the disabled
-   legacy host deployment:
-       /opt/beszel-agent
-       /var/lib/beszel-agent
-       beszel-agent.service
-       beszel-agent-update.service
-       beszel-agent-update.timer
+2. Once ScopeCreep has an external peer, define and test:
+       local preference
+       edge failover
+       route withdrawal
+       next-hop behavior
+       asymmetric path handling
 
-2. Remove /opt/beszel-agent and /var/lib/beszel-agent from ScopeCreep's backup
-   script after the legacy deployment is deleted.
+3. Keep external exports aggregate-only:
+       172.20.220.48/28
+       fdf0:e12c:5528::/48
 
-3. Inventory cloudflared configuration without exposing tunnel credentials.
+4. Continue avoiding Docker overlap with 172.20.0.0/14.
 
-4. Identify the purpose/name of wg1 peers:
-       10.98.0.2
-       10.98.0.3
-       10.98.0.4
+5. Verify normal delegated DNS/reverse DNS after registry PR #7412 merges.
 
-5. Capture the effective listening socket inventory.
+6. Inventory cloudflared configuration without exposing credentials.
 
-6. Confirm whether any useful persistent data exists outside:
-       /var/lib/restic
-       /opt/stacks
-       /opt/dockge
-       Beszel paths
+7. Identify the purpose/name of wg1 peers.
 
-7. Decide whether ScopeCreep will ever participate in DN42. If yes, move Docker
-   networks away from 172.20.0.0/14 before configuring DN42 routes.
-
-8. Verify the first scheduled weekly Clanker repository maintenance run and its
-   integrity check.
+8. Remove the disabled legacy host Beszel deployment after sufficient soak time.
 
 9. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
 
-10. Decide whether /opt/missioncontrol-agent should remain reproducible-only or
-    be explicitly included in ScopeCreep's backup. The current systemd unit and
-    runtime environment configuration are already covered through /etc.
+10. Decide whether ScopeCreep should eventually carry controlled DN42 transit.
+    Do not enable it accidentally through broad forwarding or export rules.
 
 ===============================================================================
-23. SUMMARY
+16. SUMMARY
 ===============================================================================
 
-ScopeCreep is currently a small, clean secondary VPS with a narrow set of
-responsibilities:
+ScopeCreep is no longer merely a secondary utility VPS.
 
+It currently provides:
     - peer backup storage for Clanker
     - self-backup to Clanker
     - Mission Control Agent
@@ -866,23 +694,18 @@ responsibilities:
     - Dozzle agent
     - Beszel agent
     - Cloudflare Tunnel
-    - WireGuard connectivity
+    - private WireGuard connectivity
+    - dedicated DN42 core WireGuard
+    - IPv4 and IPv6 iBGP to Clanker
+    - full DN42 route-table visibility through Clanker
+    - persistent DN42 router/service loopback identities
+    - secondary authoritative DN42 DNS
 
-Its critical state is small.
+The old Docker/DN42 collision has been resolved.
 
-Mission Control now treats ScopeCreep as its own stable node. The Agent is
-host-managed by systemd, exposes its API over the WireGuard network, collects
-host/Docker state, and successfully publishes into the central Gateway on
-Clanker. Its /etc/missioncontrol-agent.env file must actually be loaded by the
-systemd EnvironmentFile drop-in; having the file on disk alone is not enough.
+The biggest DN42 next step is straightforward: get ScopeCreep its own external
+peer so it becomes a genuine second edge for AS4242420425.
 
-The biggest recovery concern is not disk volume; it is preserving the secret
-files under /etc/vps-backup out-of-band, because ScopeCreep intentionally
-excludes those credentials from its own peer backup.
-
-The main remaining cleanup items are:
-    - remove the disabled legacy Beszel deployment after a short soak period
-    - remove its obsolete paths from the ScopeCreep backup script
-    - document cloudflared safely
-    - decide whether the reproducible Mission Control Agent binaries need backup
-    - avoid DN42/Docker address overlap if DN42 is ever enabled here
+===============================================================================
+END
+===============================================================================

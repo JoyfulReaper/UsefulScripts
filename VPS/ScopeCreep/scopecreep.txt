@@ -1,8 +1,8 @@
 SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-27
-Updated through DN42 router/core/iBGP and secondary authoritative DNS deployment.
+Snapshot date: 2026-09-28
+Updated through direct DN42 edge peering, controlled full-table transit for iEdon, policy routing, and 50 Mbps peer rate limiting.
 
 PURPOSE
 -------
@@ -10,10 +10,15 @@ ScopeCreep is Kyle's secondary always-on Debian VPS. It acts as a backup
 peer/storage host, monitoring-agent host, Docker utility host, WireGuard node,
 DN42 internal router, and secondary authoritative DN42 DNS server.
 
-ScopeCreep is now being developed as DN42 edge/router #2 for AS4242420425.
-It currently reaches the wider DN42 network through Clanker over a dedicated
-WireGuard core and iBGP. A direct external DN42 eBGP peer is the next major
-routing step.
+ScopeCreep is DN42 edge/router #2 for AS4242420425. In addition to its
+dedicated WireGuard/iBGP core to Clanker, it now has three direct external
+eBGP peers: iEdon (Dallas), Kioubit (Los Angeles), and MOE233 (Las Vegas).
+
+ScopeCreep also provides controlled IPv4 and IPv6 DN42 transit to iEdon. The
+transit design uses a separate BIRD routing view and Linux policy-routing table
+that excludes routes learned directly from iEdon, so traffic arriving from
+iEdon is forwarded through an alternate peer instead of hairpinning back to
+iEdon. The iEdon peer is capped at 50 Mbps in both directions.
 
 This file is intended to answer:
 - What is ScopeCreep?
@@ -185,7 +190,31 @@ ScopeCreep:
     172.20.220.51 TCP/UDP 53
     fdf0:e12c:5528::51 TCP/UDP 53
 
-General DN42 transit through ScopeCreep is not enabled.
+Controlled DN42 transit is enabled for iEdon only.
+
+Allowed forwarding exits from wg-dn42-iedon:
+    wg-dn42-kioubit
+    wg-dn42-moe233
+    wg-dn42-core (toward Clanker)
+
+UFW retains a default routed policy of deny; only these explicit iEdon transit
+paths are allowed.
+
+Transit policy routing:
+    Linux routing table: 2190
+    IPv4/IPv6 rule priority: 21880
+    Match: iif wg-dn42-iedon
+    Action: lookup table 2190
+
+Persistence:
+    /etc/systemd/system/dn42-iedon-transit-policy.service
+    enabled and active as of 2026-09-28.
+
+Rate limiting on wg-dn42-iedon:
+    egress: tc TBF, 50 Mbit/s
+    ingress: tc clsact + police, 50 Mbit/s
+    service: /etc/systemd/system/dn42-iedon-rate-limit.service
+    enabled and active as of 2026-09-28.
 
 ===============================================================================
 4. DN42
@@ -194,65 +223,164 @@ General DN42 transit through ScopeCreep is not enabled.
 Registry / AS:
     AS4242420425
 
+Registered prefixes:
+    IPv4: 172.20.220.48/28
+    IPv6: fdf0:e12c:5528::/48
+
 ScopeCreep role:
-    internal DN42 router
+    DN42 edge/router #2
+    internal iBGP router to Clanker
     secondary authoritative DNS
-    future edge/router #2
+    controlled transit provider to iEdon
 
 Routing daemon:
     BIRD 2.17.5
 
-Live BIRD protocols verified 2026-09-27:
+Internal core:
     clanker_core       Established
     clanker_core_v6    Established
-    kernel_v4          up
-    kernel_v6          up
-    scopecreep_dn42_v4 Static up
-    scopecreep_dn42_v6 Static up
+    wg-dn42-core       192.168.252.2/30, fe80::425:2/64
 
-Route table counts verified 2026-09-27:
-    master4:
-        1371 routes / 1371 networks
+Direct external peers verified 2026-09-28:
 
-    master6:
-        1320 routes / 1320 networks
+1. iEdon Dallas
+    ASN: AS4242422189
+    BIRD protocol: iedon_dal
+    WireGuard interface: wg-dn42-iedon
+    local UDP port: 22189
+    local BGP link-local: fe80::425:2189
+    remote BGP link-local: fe80::2189:180
+    relationship experiment: Full Table / Full Transit
+    state: Established
 
-    total:
-        2691 routes / 2691 networks
+2. Kioubit Los Angeles
+    ASN: AS4242423914
+    BIRD protocol: kioubit_lax
+    WireGuard interface: wg-dn42-kioubit
+    local UDP port: 23914
+    remote BGP link-local: fe80::ade0
+    state: Established
 
-Control-plane design:
-    underlay:
-        wg-dn42-core
+3. MOE233 Las Vegas
+    ASN: AS4242420253
+    BIRD protocol: moe233_las
+    WireGuard interface: wg-dn42-moe233
+    local UDP port: 20253
+    remote BGP link-local: fe80::253
+    state: Established
 
-    IPv4 iBGP:
-        ScopeCreep <-> Clanker over 192.168.252.0/30
+External export policy:
+    Kioubit and MOE233 retain the normal peer policy.
+    iEdon has a peer-specific full-table export policy that:
+        - always exports AS4242420425's own registered prefixes
+        - rejects paths that already contain AS4242422189
+        - rejects standard NO_EXPORT / NO_ADVERTISE communities
+        - exports other valid DN42 routes
 
-    IPv6 iBGP:
-        ScopeCreep <-> Clanker over fe80::425:1 / fe80::425:2
+Observed iEdon route exchange after enabling Full Table on 2026-09-28:
+    IPv4 imported: ~1260
+    IPv4 exported: ~1172
+    IPv6 imported: ~1240
+    IPv6 exported: ~1191
 
-ScopeCreep receives valid DN42 routes from Clanker.
+    Counts are dynamic and should be treated as an observed snapshot, not fixed
+    expected values.
 
-ScopeCreep currently originates only its intended local host identities toward
-Clanker:
+IEDON TRANSIT ROUTING VIEW
+--------------------------
+
+BIRD tables:
+    iedon_transit4
+    iedon_transit6
+
+BIRD protocols:
+    iedon_transit_pipe4
+    iedon_transit_pipe6
+    iedon_transit_kernel4
+    iedon_transit_kernel6
+
+Linux kernel routing table:
+    2190
+
+Design:
+    master4/master6
+        -> pipe every route except routes whose source protocol is iedon_dal
+        -> iedon_transit4/iedon_transit6
+        -> kernel table 2190
+
+Linux policy rules:
+    priority 21880
+    from all iif wg-dn42-iedon lookup 2190
+
+This allows traffic arriving from iEdon to use the best alternate path through
+Kioubit, MOE233, or Clanker instead of selecting a route learned directly from
+iEdon and hairpinning it back to the same peer.
+
+Persistence:
+    /etc/systemd/system/dn42-iedon-transit-policy.service
+    enabled
+    active (oneshot/exited)
+
+DATA-PLANE VERIFICATION
+-----------------------
+
+Verified 2026-09-28 using iEdon's own IPv4 and IPv6 routing health probes.
+Packets arrived on wg-dn42-iedon and were observed leaving wg-dn42-kioubit
+with IPv4 TTL / IPv6 hop-limit decremented by one. iEdon's portal subsequently
+reported both V4 OK and V6 OK.
+
+This confirms actual forwarded transit traffic, not merely BGP advertisement.
+
+FIREWALL
+--------
+
+UFW default routed policy remains deny. Explicit forwarded transit is allowed
+from wg-dn42-iedon to:
+    wg-dn42-kioubit
+    wg-dn42-moe233
+    wg-dn42-core
+
+Equivalent IPv4 and IPv6 rules are present.
+
+RATE LIMIT
+----------
+
+The complete wg-dn42-iedon interface is capped at 50 Mbit/s in both directions.
+This includes transit plus BGP/health/keepalive traffic on that interface.
+
+Egress ScopeCreep -> iEdon:
+    tc TBF
+    rate 50mbit
+    burst 256kb
+    latency 50ms
+
+Ingress iEdon -> ScopeCreep:
+    tc clsact ingress filter
+    matchall police
+    rate 50mbit
+    burst 256kb
+    conform-exceed drop
+
+Persistence:
+    /etc/systemd/system/dn42-iedon-rate-limit.service
+    enabled
+    active (oneshot/exited)
+
+Operational status helper:
+    iedon-transit-status.sh
+
+OWN PREFIX ORIGINATION
+----------------------
+
+ScopeCreep still originates its intended local host identities internally:
     172.20.220.51/32
     172.20.220.52/32
     fdf0:e12c:5528::51/128
     fdf0:e12c:5528::52/128
 
-Clanker does not export these host routes to external peers. External DN42 sees
-only:
+Externally the AS continues to originate the registered aggregates:
     172.20.220.48/28
     fdf0:e12c:5528::/48
-
-This preserves the external aggregate while still giving ScopeCreep precise
-internal routing.
-
-Current external-peering status:
-    ScopeCreep has no independent external DN42 eBGP peer yet.
-
-Next routing milestone:
-    establish at least one external DN42 peer directly on ScopeCreep, then design
-    failover/preference behavior between edge #1 and edge #2.
 
 ===============================================================================
 5. AUTHORITATIVE DN42 DNS / NS2
@@ -274,7 +402,7 @@ Bindings:
 Primary:
     ns1.kgivler.dn42
     172.20.220.50
-    fdf0:e12c:5528::10
+    fdf0:e12c:5528::50
     host: Clanker
 
 Secondary-zone model:
@@ -313,13 +441,13 @@ Reverse DNS served by the authoritative pair includes:
     .52 -> scopecreep.kgivler.dn42.
 
     ::1  -> clanker.kgivler.dn42.
-    ::10 -> ns1.kgivler.dn42.
+    ::50 -> ns1.kgivler.dn42.
     ::51 -> ns2.kgivler.dn42.
     ::52 -> scopecreep.kgivler.dn42.
 
 Registry delegation:
     dn42/registry PR #7412
-    pending at this snapshot
+    merged by 2026-09-28
 
 ===============================================================================
 6. DOCKER
@@ -406,7 +534,12 @@ Important services include:
     bird.service
     nsd.service
     wg-quick@wg-dn42-core.service
+    wg-quick@wg-dn42-iedon.service
+    wg-quick@wg-dn42-kioubit.service
+    wg-quick@wg-dn42-moe233.service
     dn42-loopback.service
+    dn42-iedon-transit-policy.service
+    dn42-iedon-rate-limit.service
     cloudflared.service
     containerd.service
     docker.service
@@ -543,7 +676,8 @@ SSH:
 DN42:
     iBGP limited to wg-dn42-core
     authoritative DNS intentionally reachable on .51 / ::51
-    general forwarded transit not enabled
+    controlled iEdon transit enabled through explicit policy-routing/firewall rules
+    iEdon peer capped at 50 Mbps in both directions
 
 Secret-bearing files under /etc/vps-backup and other private credentials must
 never be committed publicly.
@@ -632,7 +766,19 @@ ScopeCreep
    +-- NSD secondary authoritative DNS
    |
    +-- BIRD 2.17.5
-   |     full DN42 routes from Clanker
+   |     iBGP core -> Clanker
+   |     eBGP -> iEdon / Kioubit / MOE233
+   |     iEdon alternate transit view -> Linux table 2190
+   |
+   +-- wg-dn42-iedon
+   |     full-table BGP + controlled IPv4/IPv6 transit
+   |     50 Mbps ingress/egress cap
+   |
+   +-- wg-dn42-kioubit
+   |     external DN42 peer / transit exit
+   |
+   +-- wg-dn42-moe233
+   |     external DN42 peer / transit exit
    |
    +-- Docker
          +-- rest-server
@@ -652,39 +798,39 @@ Backup relationship:
 15. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
-1. Obtain a direct external DN42 eBGP peer on ScopeCreep.
+1. Observe iEdon transit traffic over several hours/days and record normal
+   throughput, tc overlimits/drops, and WireGuard transfer growth.
 
-2. Once ScopeCreep has an external peer, define and test:
-       local preference
-       edge failover
-       route withdrawal
-       next-hop behavior
-       asymmetric path handling
+2. Keep the iEdon 50 Mbps rate cap unless there is a deliberate reason to
+   change it. Test any future cap change before making it persistent.
 
-3. Keep external exports aggregate-only:
-       172.20.220.48/28
-       fdf0:e12c:5528::/48
+3. Consider adding longer-term byte accounting / monthly transfer alerts for
+   DN42 transit so VPS transfer usage cannot surprise the operator.
 
-4. Continue avoiding Docker overlap with 172.20.0.0/14.
+4. Continue testing failure behavior:
+       Kioubit withdrawal
+       MOE233 withdrawal
+       Clanker/core withdrawal
+       alternate-path selection in table 2190
 
-5. Verify normal delegated DNS/reverse DNS after registry PR #7412 merges.
+5. Consider whether any other peer should receive transit. Do not broaden the
+   shared dnpeers export template; keep relationship-specific policy explicit.
 
-6. Inventory cloudflared configuration without exposing credentials.
+6. Continue avoiding Docker overlap with 172.20.0.0/14.
 
-7. Identify the purpose/name of wg1 peers.
+7. Inventory cloudflared configuration without exposing credentials.
 
-8. Remove the disabled legacy host Beszel deployment after sufficient soak time.
+8. Identify the purpose/name of wg1 peers.
 
-9. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
+9. Remove the disabled legacy host Beszel deployment after sufficient soak time.
 
-10. Decide whether ScopeCreep should eventually carry controlled DN42 transit.
-    Do not enable it accidentally through broad forwarding or export rules.
+10. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
 
 ===============================================================================
 16. SUMMARY
 ===============================================================================
 
-ScopeCreep is no longer merely a secondary utility VPS.
+ScopeCreep is a real second DN42 edge for AS4242420425.
 
 It currently provides:
     - peer backup storage for Clanker
@@ -695,16 +841,23 @@ It currently provides:
     - Beszel agent
     - Cloudflare Tunnel
     - private WireGuard connectivity
-    - dedicated DN42 core WireGuard
-    - IPv4 and IPv6 iBGP to Clanker
-    - full DN42 route-table visibility through Clanker
+    - dedicated DN42 core WireGuard + iBGP to Clanker
+    - direct DN42 eBGP to iEdon, Kioubit, and MOE233
+    - full DN42 route visibility from multiple edges
     - persistent DN42 router/service loopback identities
     - secondary authoritative DN42 DNS
+    - controlled full-table IPv4/IPv6 transit for iEdon
+    - alternate-route policy table 2190 for iEdon transit
+    - explicit UFW transit exits
+    - persistent 50 Mbps bidirectional cap on the iEdon peer
 
-The old Docker/DN42 collision has been resolved.
+The old Docker/DN42 collision is resolved. The transit experiment has been
+verified in both the control plane and data plane, including green iEdon V4/V6
+routing health checks.
 
-The biggest DN42 next step is straightforward: get ScopeCreep its own external
-peer so it becomes a genuine second edge for AS4242420425.
+The main operational concern is now observation rather than basic bring-up:
+watch transfer usage, tc drops/overlimits, peer stability, and failover behavior
+before broadening transit to any additional peer.
 
 ===============================================================================
 END

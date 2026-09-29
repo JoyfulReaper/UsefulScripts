@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (( $# == 0 )); then
+    echo "Usage: $0 <interface> [interface ...]"
+    exit 1
+fi
+
+declare -A seen
+interfaces=()
+
+for iface in "$@"; do
+    [[ -n "${seen[$iface]:-}" ]] && continue
+    seen["$iface"]=1
+
+    if [[ ! -d "/sys/class/net/$iface/statistics" ]]; then
+        echo "Interface not found: $iface" >&2
+        exit 1
+    fi
+
+    interfaces+=("$iface")
+done
+
+declare -A prev_rx
+declare -A prev_tx
+declare -A start_rx
+declare -A start_tx
+declare -A peak_rx
+declare -A peak_tx
+
+for iface in "${interfaces[@]}"; do
+    base="/sys/class/net/$iface/statistics"
+
+    rx=$(<"$base/rx_bytes")
+    tx=$(<"$base/tx_bytes")
+
+    prev_rx["$iface"]=$rx
+    prev_tx["$iface"]=$tx
+    start_rx["$iface"]=$rx
+    start_tx["$iface"]=$tx
+    peak_rx["$iface"]=0
+    peak_tx["$iface"]=0
+done
+
+start_time=$(date +%s)
+interval=1
+
+human_bytes() {
+    awk -v b="$1" '
+    BEGIN {
+        if (b >= 1099511627776)
+            printf "%.2f TiB", b / 1099511627776
+        else if (b >= 1073741824)
+            printf "%.2f GiB", b / 1073741824
+        else if (b >= 1048576)
+            printf "%.2f MiB", b / 1048576
+        else if (b >= 1024)
+            printf "%.2f KiB", b / 1024
+        else
+            printf "%d B", b
+    }'
+}
+
+human_rate() {
+    awk -v bytes="$1" '
+    BEGIN {
+        bits = bytes * 8
+
+        if (bits >= 1000000000)
+            printf "%.2f Gbit/s", bits / 1000000000
+        else if (bits >= 1000000)
+            printf "%.2f Mbit/s", bits / 1000000
+        else if (bits >= 1000)
+            printf "%.2f Kbit/s", bits / 1000
+        else
+            printf "%.0f bit/s", bits
+    }'
+}
+
+while true; do
+    sleep "$interval"
+
+    now=$(date +%s)
+    elapsed=$((now - start_time))
+
+    total_rx_rate=0
+    total_tx_rate=0
+    total_session_rx=0
+    total_session_tx=0
+
+    clear
+
+    printf 'DN42 Interface Monitor\n'
+    printf 'Monitoring: %02d:%02d:%02d\n\n' \
+        $((elapsed / 3600)) \
+        $(((elapsed % 3600) / 60)) \
+        $((elapsed % 60))
+
+printf '%-18s %14s %14s %14s %14s\n' \
+    "Interface" \
+    "RX current" \
+    "TX current" \
+    "RX peak" \
+    "TX peak"
+
+printf '%s\n' \
+    '--------------------------------------------------------------------------------'
+
+for iface in "${interfaces[@]}"; do
+    base="/sys/class/net/$iface/statistics"
+
+    rx=$(<"$base/rx_bytes")
+    tx=$(<"$base/tx_bytes")
+
+    rx_rate=$(( (rx - prev_rx["$iface"]) / interval ))
+    tx_rate=$(( (tx - prev_tx["$iface"]) / interval ))
+
+    session_rx=$(( rx - start_rx["$iface"] ))
+    session_tx=$(( tx - start_tx["$iface"] ))
+
+    if (( rx_rate > peak_rx["$iface"] )); then
+        peak_rx["$iface"]=$rx_rate
+    fi
+
+    if (( tx_rate > peak_tx["$iface"] )); then
+        peak_tx["$iface"]=$tx_rate
+    fi
+
+    total_rx_rate=$((total_rx_rate + rx_rate))
+    total_tx_rate=$((total_tx_rate + tx_rate))
+    total_session_rx=$((total_session_rx + session_rx))
+    total_session_tx=$((total_session_tx + session_tx))
+
+    printf '%-18s %14s %14s %14s %14s\n' \
+        "$iface" \
+        "$(human_rate "$rx_rate")" \
+        "$(human_rate "$tx_rate")" \
+        "$(human_rate "${peak_rx[$iface]}")" \
+        "$(human_rate "${peak_tx[$iface]}")"
+
+    prev_rx["$iface"]=$rx
+    prev_tx["$iface"]=$tx
+done
+
+printf '\n'
+
+printf '%-18s %14s %14s %14s %14s\n' \
+    "Interface" \
+    "RX session" \
+    "TX session" \
+    "RX lifetime" \
+    "TX lifetime"
+
+printf '%s\n' \
+    '--------------------------------------------------------------------------------'
+
+for iface in "${interfaces[@]}"; do
+    base="/sys/class/net/$iface/statistics"
+
+    rx=$(<"$base/rx_bytes")
+    tx=$(<"$base/tx_bytes")
+
+    session_rx=$(( rx - start_rx["$iface"] ))
+    session_tx=$(( tx - start_tx["$iface"] ))
+
+    printf '%-18s %14s %14s %14s %14s\n' \
+        "$iface" \
+        "$(human_bytes "$session_rx")" \
+        "$(human_bytes "$session_tx")" \
+        "$(human_bytes "$rx")" \
+        "$(human_bytes "$tx")"
+done
+    printf '%s\n' \
+        '--------------------------------------------------------------------------------------------------------------'
+
+    printf '%-18s %14s %14s %14s %14s\n' \
+        "TOTAL" \
+        "$(human_rate "$total_rx_rate")" \
+        "$(human_rate "$total_tx_rate")" \
+        "$(human_bytes "$total_session_rx")" \
+        "$(human_bytes "$total_session_tx")"
+
+    printf '\nCtrl-C to quit.\n'
+done

@@ -2,7 +2,7 @@ CLANKER
 =======
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through DN42/Yggdrasil/nginx/DNS/Unbound/IT-Tools work at 2026-09-28 15:28 EDT.
+Updated through controlled Baragoon transit and DN42 www/TLS canonicalization work on 2026-09-29.
 
 PURPOSE
 -------
@@ -359,6 +359,24 @@ Current Clanker external BGP peers at 2026-09-28 inventory:
     Session:
         Established
 
+    Export / transit policy:
+        controlled full-table IPv4 and IPv6 transit
+
+    Transit rate limit:
+        50 Mbps in each direction
+
+    Transit implementation:
+        BIRD alternate tables:
+            baragoon_transit4
+            baragoon_transit6
+
+        Linux policy-routing table:
+            1732
+
+        systemd services:
+            dn42-baragoon-transit-policy.service
+            dn42-baragoon-rate-limit.service
+
 3. HEADSCARF175 us-ewr01 / Piscataway
     ASN:
         AS4242420842
@@ -421,26 +439,49 @@ Internal DN42 core:
         keeping external peering edges independent.
 
 Routing policy:
-    Clanker currently behaves as a stub DN42 AS.
-
-    It accepts valid DN42 routes from peers but exports only its own registered
-    prefixes:
+    Clanker is a multi-edge DN42 router. The default external-peer policy remains
+    own-prefix-only export:
 
         172.20.220.48/28
         fdf0:e12c:5528::/48
 
-    This was verified against all three peers at the 2026-09-25 inventory.
+    RoutedBits and HEADSCARF175 remain on that normal own-prefix-only export
+    policy unless explicitly configured otherwise.
 
-    Clanker is NOT currently offering general DN42 transit between peers.
+    Baragoon NY is an explicit controlled-transit exception.
 
-    Transit is a deliberate future decision and should consider:
-        route-leak risk
-        peer policy
-        local preference
-        failure behavior
-        monitoring
-        bandwidth / VPS transfer limits
-        whether carrying third-party DN42 traffic is desirable
+    Clanker currently provides Baragoon with controlled full-table IPv4 and IPv6
+    transit using dedicated BIRD alternate routing tables:
+
+        baragoon_transit4
+        baragoon_transit6
+
+    Linux policy routing uses table 1732.
+
+    Relevant policy-rule ordering:
+
+        priority 21860
+            traffic to AS4242420425's own prefixes bypasses the transit table
+            and uses main
+
+        priority 21870
+            traffic arriving on wg-dn42-ny1 looks up table 1732
+
+    The transit view excludes routes learned directly from Baragoon so traffic
+    received from Baragoon cannot be hairpinned back to the same peer.
+
+    Rate limiting is 50 Mbps in each direction and is managed by:
+
+        dn42-baragoon-transit-policy.service
+        dn42-baragoon-rate-limit.service
+
+    Anti-hairpin route checks were verified during setup.
+
+    The controlled-transit policy is live, but as of 2026-09-29 no real
+    third-party transit packet has yet been observed during packet captures.
+
+    This is NOT general unrestricted transit between every Clanker peer.
+    Third-party route export remains an explicit per-peer policy decision.
 
 ROA validation:
     BIRD contains dedicated DN42 ROA tables:
@@ -523,14 +564,23 @@ DN42 nginx ingress:
 
         kgivler.dn42
             -> personal site
+            -> canonical HTTPS hostname
+        www.kgivler.dn42
+            -> redirects to https://kgivler.dn42/
 
         randomsteam.dn42
             -> RandomSteam on 127.0.0.1:5182
+            -> canonical HTTPS hostname
             -> separate randomsteam.dn42 certificate
             -> Blazor/SignalR HTTPS path verified
+        www.randomsteam.dn42
+            -> redirects to https://randomsteam.dn42/
 
         randomgit.dn42
             -> Random GitHub on 127.0.0.1:5183
+            -> canonical HTTPS hostname
+        www.randomgit.dn42
+            -> redirects to https://randomgit.dn42/
 
         api.kgivler.dn42
             -> kgivler API
@@ -930,7 +980,7 @@ Important running host services at 2026-09-25 inventory include:
         binds 127.0.0.1:5186 behind nginx
 
     nsd.service
-        DN42 authoritative DNS on 172.20.220.50 / fdf0:e12c:5528::10
+        DN42 authoritative DNS on 172.20.220.50 / fdf0:e12c:5528::50
 
     unbound.service
         local recursive/caching DNS on loopback only
@@ -1305,7 +1355,7 @@ Recovery behavior:
 
 Certbot is installed and has an active renewal timer.
 
-Observed certificate inventory at 2026-09-28:
+Certificate inventory updated through 2026-09-29:
 
 1. dn42-sites
     Key type:
@@ -1314,13 +1364,16 @@ Observed certificate inventory at 2026-09-28:
     Domains:
         joyfulreaper.dn42
         kgivler.dn42
+        www.kgivler.dn42
         randomgit.dn42
+        www.randomgit.dn42
         api.kgivler.dn42
         qotd.kgivler.dn42
         tools.joyfulreaper.dn42
 
     Expiry:
-        2026-10-30 19:15:49 UTC
+        2026-10-31
+        Use `certbot certificates` for the exact current timestamp.
 
     Paths:
         /etc/letsencrypt/live/dn42-sites/fullchain.pem
@@ -1336,9 +1389,11 @@ Observed certificate inventory at 2026-09-28:
 
     Domains:
         randomsteam.dn42
+        www.randomsteam.dn42
 
     Expiry:
-        2026-10-30 14:20:53 UTC
+        2026-10-31
+        Use `certbot certificates` for the exact current timestamp.
 
     Paths:
         /etc/letsencrypt/live/randomsteam.dn42/fullchain.pem
@@ -1730,9 +1785,12 @@ Suggested high-level rebuild order:
        local DN42 prefixes
        ROA tables
        all intended BGP sessions
-       own-prefix-only export policy
-       no accidental transit
-       NSD authoritative answers on .50 / ::10
+       normal own-prefix-only export policy for non-transit peers
+       Baragoon controlled-transit policy and alternate BIRD tables
+       Linux policy-routing table 1732 and rule ordering
+       Baragoon own-prefix bypass and anti-hairpin behavior
+       no accidental transit to peers not explicitly configured for transit
+       NSD authoritative answers on .50 / ::50
        Unbound local recursion on 127.0.0.1 / ::1
        systemd-resolved -> local Unbound
        ordinary .dn42 resolution from Clanker
@@ -1899,9 +1957,11 @@ Still worth checking, cleaning up or deciding:
        peer-specific UFW TCP/179 rules
        troubleshooting workflow
 
-2. Keep current DN42 export policy own-prefix-only unless transit is explicitly
-   designed and tested. Clanker and ScopeCreep form an internal multi-edge core;
-   external peers must not accidentally receive third-party routes.
+2. Keep own-prefix-only export as the default external-peer policy.
+   Baragoon is an explicit controlled-transit exception on Clanker. Continue
+   monitoring the transit policy and verify the real data path when the first
+   third-party transit traffic is observed. Other peers must not accidentally
+   receive third-party routes.
 
 3. Review / document ScopeCreep in the same level of detail as Clanker.
 
@@ -1940,12 +2000,17 @@ Still worth checking, cleaning up or deciding:
        shared dn42-sites certificate currently covers:
            joyfulreaper.dn42
            kgivler.dn42
+           www.kgivler.dn42
            randomgit.dn42
+           www.randomgit.dn42
            api.kgivler.dn42
            qotd.kgivler.dn42
            tools.joyfulreaper.dn42
 
-       randomsteam.dn42 remains on its own certificate.
+       randomsteam.dn42 remains on its own certificate together with:
+           www.randomsteam.dn42
+
+       www aliases redirect to their canonical bare HTTPS hostnames.
 
 11. DN42Landing deployment:
        remember that src/static/index.html is embedded into the Go binary.

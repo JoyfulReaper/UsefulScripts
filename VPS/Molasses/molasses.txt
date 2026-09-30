@@ -279,8 +279,9 @@ routed DN42 client:
         172.20.220.53/32
         fdf0:e12c:5528::53/128
 
-    A direct hbg1 <-> ScopeCreep core is planned to complete the three-router
-    iBGP mesh.
+    hbg1 now also has a direct native-IPv6 WireGuard/iBGP core to ScopeCreep,
+    completing the three-router internal iBGP mesh. Failover through ScopeCreep
+    was verified while hbg1's Clanker BGP session was disabled.
 
 Molasses is useful as:
     - an independent DN42 client test point

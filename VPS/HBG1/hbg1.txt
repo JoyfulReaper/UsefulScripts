@@ -15,8 +15,9 @@ Current roles:
 - future manually approved external DN42 peering point
 - native-IPv6 test point independent of the VPS providers
 
-hbg1 is not currently a general DN42 transit node. It receives a filtered DN42
-table from Clanker and advertises only its own router host identities internally.
+hbg1 is not currently a general DN42 transit node. It receives redundant DN42
+route feeds from Clanker and ScopeCreep and advertises only its own router host
+identities internally.
 
 ===============================================================================
 1. HOST / VIRTUALIZATION
@@ -140,8 +141,13 @@ hbg1 router IPv6:
 Addresses are installed persistently on lo0 through /etc/rc.conf.
 
 ===============================================================================
-5. CLANKER CORE
+5. INTERNAL CORE LINKS
 ===============================================================================
+
+The residential POP has direct WireGuard/iBGP core links to both public edges.
+
+Clanker core
+------------
 
 Interface:
     wg-dn42-core
@@ -154,24 +160,47 @@ Clanker:
     192.168.252.5/30
     fd42:42:42:252::5/126
 
-WireGuard:
-    Table = off
-
-Meaning:
-    WireGuard AllowedIPs choose the cryptographic peer but do not install the
-    DN42 routing table. BIRD owns routing decisions.
-
-Underlay:
-    native residential IPv6
-
 Clanker WireGuard UDP:
     51823
 
 Persistent config:
     /usr/local/etc/wireguard/wg-dn42-core.conf
 
-hbg1 initiates the tunnel. Clanker learns the changing source endpoint rather
-than requiring a fixed residential endpoint on its peer definition.
+ScopeCreep core
+---------------
+
+Interface:
+    wg-dn42-sc
+
+hbg1:
+    192.168.252.10/30
+    fd42:42:42:252::a/126
+
+ScopeCreep:
+    192.168.252.9/30
+    fd42:42:42:252::9/126
+
+ScopeCreep WireGuard UDP:
+    51824
+
+Persistent config:
+    /usr/local/etc/wireguard/wg-dn42-sc.conf
+
+ScopeCreep public IPv6 endpoint used as the underlay:
+    2607:9000:700:1063:b1ee:d:c0ff:ee
+
+Both core tunnels:
+    Table = off
+    native residential IPv6 underlay
+    BIRD owns DN42 route selection
+    hbg1 initiates the WireGuard tunnel
+
+The three-router internal topology is now a full mesh:
+
+            Clanker
+            /     \
+           /       \
+    ScopeCreep --- hbg1
 
 ===============================================================================
 6. BIRD / MP-BGP / RFC 8950
@@ -186,48 +215,29 @@ Config:
 Router ID:
     172.20.220.53
 
-Protocol:
+Internal protocols:
     clanker_core
+    scopecreep_core
 
-Session:
-    iBGP
+Both are iBGP sessions inside:
+    AS4242420425
+
+Clanker BGP transport:
     local fd42:42:42:252::6
     neighbor fd42:42:42:252::5
-    AS4242420425 on both sides
 
-One IPv6 BGP TCP session carries:
+ScopeCreep BGP transport:
+    local fd42:42:42:252::a
+    neighbor fd42:42:42:252::9
+
+
+Each core uses one IPv6 BGP TCP session carrying:
     IPv4 NLRI
     IPv6 NLRI
 
-IPv4 channel:
+IPv4 channels:
     Extended Next Hop enabled and required
     RFC 8950
-
-Observed proof:
-    real DN42 IPv4 prefixes are installed through IPv6 next hop
-        fd42:42:42:252::5
-    on
-        wg-dn42-core
-
-Observed full-feed snapshot 2026-09-30:
-    clanker_core IPv4:
-        986 imported
-        1 exported
-
-    clanker_core IPv6:
-        906 imported
-        1 exported
-
-Kernel protocol snapshot:
-    kernel4:
-        986 BGP routes exported to the FreeBSD kernel
-
-    kernel6:
-        905 BGP routes exported to the FreeBSD kernel
-
-There is a one-route IPv6 difference worth identifying later. It was not
-treated as a failure because the BGP session, route feed, and kernel protocol
-were otherwise healthy.
 
 hbg1 export policy:
     advertise only:
@@ -239,11 +249,27 @@ hbg1 import policy:
     accept valid DN42 routes whose origin passes the DN42 ROA tables
     reject everything else
 
-Current transit behavior:
-    hbg1 has only one DN42-facing core neighbor: Clanker.
-    Clanker does not select hbg1 as a path to arbitrary remote DN42 prefixes.
-    Therefore hbg1 is currently a routed POP/leaf router with a full table,
-    not a useful third-party transit path.
+Current role:
+    hbg1 is a redundant routed residential POP with full DN42 route feeds from
+    both VPS edges. It is not currently used as general third-party transit
+    between Clanker and ScopeCreep because it exports only its own router host
+    identities internally.
+
+Failover verification 2026-09-30:
+    clanker_core was deliberately disabled.
+
+    scopecreep_core remained:
+        Established
+
+    hbg1 retained:
+        1215 IPv4 routes
+        1163 IPv6 routes
+
+    clanker_core was then re-enabled and returned to Established while
+    scopecreep_core remained Established.
+
+This confirms hbg1 retains DN42 routing through ScopeCreep if its Clanker BGP
+session is unavailable.
 
 ===============================================================================
 7. ROA DATA
@@ -290,19 +316,31 @@ Current intentionally small ruleset:
     pass in quick on wg0 proto tcp to port 22 keep state
     block in log quick proto tcp to port 22
 
+    pass in quick on wg-dn42-core proto tcp to port 179 keep state
+    pass in quick on wg-dn42-sc proto tcp to port 179 keep state
+    block in log quick proto tcp to port 179
+
+    block in log quick proto udp to port 514
+
     pass all
 
 Effect:
     SSH arriving on wg0:
         allowed
 
-    SSH arriving on vtnet0/native residential IPv6:
+    SSH arriving elsewhere:
         blocked
 
-    SSH arriving through the DN42 core:
+    BGP TCP/179 arriving on either internal DN42 core:
+        allowed
+
+    BGP TCP/179 arriving elsewhere:
         blocked
 
-    all non-SSH traffic:
+    UDP/514:
+        blocked
+
+    other traffic:
         currently unchanged/allowed
 
 This was deliberately kept minimal until the listening-socket inventory is
@@ -344,7 +382,7 @@ Logged blocks:
     ipv6_gateway_enable="YES"
 
     wireguard_enable="YES"
-    wireguard_interfaces="wg0 wg-dn42-core"
+    wireguard_interfaces="wg0 wg-dn42-core wg-dn42-sc"
 
     bird_enable="YES"
     pf_enable="YES"
@@ -397,28 +435,23 @@ DN42 bandwidth cap so many 5 Mbps peers cannot collectively dominate the home
 connection.
 
 ===============================================================================
-11. PLANNED SCOPECREEP CORE
+11. FULL-MESH / FAILOVER STATUS
 ===============================================================================
 
-TODO:
-    Build a direct hbg1 <-> ScopeCreep WireGuard core and iBGP session.
+Completed 2026-09-30:
+    direct hbg1 <-> ScopeCreep WireGuard core
+    direct hbg1 <-> ScopeCreep iBGP session
+    IPv4 + IPv6 NLRI over one IPv6 BGP session
+    RFC 8950 Extended Next Hop for IPv4
+    three-router internal iBGP full mesh
+    failover test with clanker_core disabled
 
-Purpose:
-    Complete the three-router iBGP mesh:
-        Clanker
-        ScopeCreep
-        hbg1
+Result:
+    hbg1 retained its DN42 routing table through ScopeCreep.
 
-Why full mesh:
-    Normal iBGP split-horizon behavior means a router does not simply
-    re-advertise routes learned from one ordinary iBGP peer to another.
-    With only three routers, a direct full mesh is simpler than introducing a
-    route reflector.
-
-Preferred design:
-    native IPv6 underlay where practical
-    MP-BGP
-    RFC 8950 for IPv4 NLRI if both sides support the chosen session design
+The next topology work is no longer building the mesh. Future work should focus
+on monitoring, external peering experiments, BGP community metadata, and
+periodic failover re-testing after major routing-policy changes.
 
 ===============================================================================
 12. RECOVERY ORDER
@@ -433,15 +466,16 @@ Suggested rebuild:
 6. Restore DN42 loopback identities.
 7. Enable IPv4/IPv6 forwarding.
 8. Restore wg-dn42-core to Clanker.
-9. Verify WireGuard handshake and core-address reachability.
-10. Install/restore BIRD.
-11. Restore ROA tables and update-dn42-roa.
-12. Validate BIRD config before starting/reloading it.
-13. Verify clanker_core Established with IPv4 + IPv6 channels.
-14. Verify DN42 route counts and kernel route installation.
-15. Restore PF and verify SSH is only reachable through wg0.
-16. Verify end-to-end DN42 reachability.
-17. Restore any future external peers one at a time.
+9. Restore wg-dn42-sc to ScopeCreep.
+10. Verify both WireGuard handshakes and core-address reachability.
+11. Install/restore BIRD.
+12. Restore ROA tables and update-dn42-roa.
+13. Validate BIRD config before starting/reloading it.
+14. Verify clanker_core and scopecreep_core are Established.
+15. Verify IPv4/IPv6 DN42 route counts and kernel route installation.
+16. Restore PF and verify SSH is only reachable through wg0.
+17. Verify end-to-end DN42 reachability.
+18. Restore any future external peers one at a time.
 
 ===============================================================================
 13. KNOWN NEXT ACTIONS
@@ -455,15 +489,16 @@ Suggested rebuild:
 3. Identify the one-route IPv6 difference between clanker_core imported routes
    and kernel6 exported routes.
 
-4. Test representative IPv4 and IPv6 DN42 destinations from hbg1.
+4. Test representative IPv4 and IPv6 DN42 destinations from hbg1 periodically.
 
-5. Build the direct hbg1 <-> ScopeCreep core/iBGP leg.
+5. Reboot Molasses later to verify routed-/64 bridge persistence, IPv6
+   forwarding/RA behavior, the narrow UFW forwarding rule, and both native-IPv6
+   hbg1 core tunnels.
 
-6. Reboot Molasses later to verify routed-/64 bridge persistence, IPv6
-   forwarding/RA behavior, and the narrow UFW forwarding rule.
-
-7. When the first external hbg1 peer is approved, implement and verify the
+6. When the first external hbg1 peer is approved, implement and verify the
    promised 5 Mbps-per-direction limiter before enabling general peer traffic.
+
+7. Re-test internal failover after significant BIRD or WireGuard policy changes.
 
 ===============================================================================
 END

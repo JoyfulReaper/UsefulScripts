@@ -79,16 +79,20 @@ The important rule order is:
 
 The own-prefix bypass must remain ahead of the Baragoon ingress rule.
 
-Routes learned directly from Baragoon are excluded from the transit return view
-to prevent traffic from being hairpinned back to Baragoon.
+Third-party routes learned from Baragoon are excluded from the transit return
+view so traffic does not use Baragoon as its own transit provider. Baragoon
+routes with AS-path length 1 are preserved so directly originated prefixes
+remain reachable over the direct session.
 
 The Baragoon path is rate-limited to 50 Mbps in each direction using:
 
     dn42-baragoon-transit-policy.service
     dn42-baragoon-rate-limit.service
 
-As of 2026-09-29, the controlled-transit policy is live and anti-hairpin checks
-look correct, but no real third-party transit packet has yet been observed.
+The controlled-transit policy is live. master4/master6 are sorted and the
+Baragoon IPv4/IPv6 channels use `secondary on`, allowing BIRD to try an
+alternate candidate when the selected best route was learned from Baragoon
+and is rejected by the peer-specific export filter.
 
 For normal peers, verify own-prefix-only exports with:
 

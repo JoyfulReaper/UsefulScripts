@@ -483,8 +483,10 @@ Internal DN42 cores:
     hbg1 installs IPv4 DN42 routes with the IPv6 next hop:
         fd42:42:42:252::5
 
-    The direct hbg1 <-> ScopeCreep core is still planned. Until that link and
-    iBGP session exist, the three-router internal topology is not a full mesh.
+    hbg1 now also has a direct native-IPv6 WireGuard/iBGP core to ScopeCreep.
+    Clanker, ScopeCreep, and hbg1 therefore form a complete three-router
+    internal iBGP mesh. hbg1 failover was verified by disabling clanker_core;
+    hbg1 retained its DN42 route feed through ScopeCreep.
 
     hbg1 is also available for manually approved external peering. It is a
     residential FreeBSD POP on a 200 Mbps connection; external peer traffic is
@@ -520,8 +522,10 @@ Routing policy:
         priority 21870
             traffic arriving on wg-dn42-ny1 looks up table 1732
 
-    The transit view excludes routes learned directly from Baragoon so traffic
-    received from Baragoon cannot be hairpinned back to the same peer.
+    The transit view excludes third-party routes learned from Baragoon so
+    traffic received from Baragoon cannot use Baragoon as its own transit
+    provider. Baragoon routes with AS-path length 1 are preserved so its
+    directly originated prefixes remain reachable over the direct session.
 
     Rate limiting is 50 Mbps in each direction and is managed by:
 
@@ -530,8 +534,12 @@ Routing policy:
 
     Anti-hairpin route checks were verified during setup.
 
-    The controlled-transit policy is live, but as of 2026-09-29 no real
-    third-party transit packet has yet been observed during packet captures.
+    master4/master6 are sorted and both Baragoon address-family channels use
+    `secondary on`. This lets BIRD try an alternate candidate when the selected
+    best route came from Baragoon and is rejected by the export policy.
+
+    Direct-prefix return routing was also verified after preserving Baragoon
+    AS-path-length-1 routes in policy table 1732.
 
     This is NOT general unrestricted transit between every Clanker peer.
     Third-party route export remains an explicit per-peer policy decision.

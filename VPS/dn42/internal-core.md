@@ -24,46 +24,28 @@ Registered allocations:
 
 ```text
                           external DN42 peers
-                          /                 \
-                         /                   \
-                  Clanker ---------------- ScopeCreep
-                     \
-                      \
-                       hbg1
-                 residential POP
-
-Clanker <-> ScopeCreep:
-    existing WireGuard/iBGP core
-
-Clanker <-> hbg1:
-    native-IPv6 WireGuard underlay
-    one IPv6 MP-BGP session
-    IPv4 + IPv6 NLRI
-    RFC 8950 for IPv4 next hops
-
-hbg1 <-> ScopeCreep:
-    planned
+                         /                  \
+                        /                    \
+                 Clanker ---------------- ScopeCreep
+                    \                       /
+                     \                     /
+                      \                   /
+                            hbg1
+                    residential FreeBSD POP
 ```
 
-The current topology is not yet a complete three-router iBGP mesh.
-
-## Why a direct hbg1 <-> ScopeCreep leg is planned
-
-Ordinary iBGP uses split-horizon behavior: routes learned from one normal iBGP
-peer are not simply re-advertised to another normal iBGP peer.
-
-For three routers there are two straightforward choices:
-
-1. full mesh; or
-2. route reflection.
-
-The network is tiny, so a direct full mesh is easier to understand and debug.
-That means three internal sessions/relationships:
-
+The three BIRD routers now form a complete internal iBGP full mesh:
 - Clanker <-> ScopeCreep
 - Clanker <-> hbg1
 - ScopeCreep <-> hbg1
-
+Clanker <-> ScopeCreep uses the existing WireGuard/iBGP core.
+Both hbg1 legs use native residential IPv6 as their underlay. hbg1 uses IPv6
+MP-BGP sessions carrying both IPv4 and IPv6 NLRI, with RFC 8950 Extended Next
+Hop for IPv4.
+The direct ScopeCreep <-> hbg1 session was added because ordinary iBGP
+split-horizon behavior does not simply re-advertise routes learned from one
+normal iBGP peer to another. With only three routers, full mesh is simpler than
+introducing route reflection.
 ## Clanker <-> hbg1 core
 
 WireGuard:
@@ -92,6 +74,52 @@ BGP:
 RFC 8950 permits IPv4 NLRI to carry an IPv6 next hop. FreeBSD 15.1 was verified
 to install real DN42 IPv4 routes through the IPv6 next hop on `wg-dn42-core`.
 
+## ScopeCreep <-> hbg1 core
+
+WireGuard:
+
+- ScopeCreep: `192.168.252.9/30`, `fd42:42:42:252::9/126`
+- hbg1: `192.168.252.10/30`, `fd42:42:42:252::a/126`
+- ScopeCreep UDP: `51824`
+- `Table = off`
+
+Underlay:
+
+- native residential IPv6
+- hbg1 initiates the WireGuard session
+- ScopeCreep endpoint: `2607:9000:700:1063:b1ee:d:c0ff:ee`
+
+BGP:
+
+- ScopeCreep protocol: `hbg1_core`
+- hbg1 protocol: `scopecreep_core`
+- one IPv6 BGP TCP session
+- AS `4242420425` on both sides
+- IPv4 + IPv6 NLRI
+- RFC 8950 Extended Next Hop for IPv4
+
+State verified 2026-09-30:
+
+- Established
+
+### Failover verification
+
+The Clanker BGP session was deliberately disabled on hbg1:
+
+```text
+clanker_core: disabled
+scopecreep_core: Established
+```
+
+hbg1 retained approximately:
+
+- 1215 IPv4 routes
+- 1163 IPv6 routes
+
+`clanker_core` was then re-enabled and returned to Established while
+`scopecreep_core` remained Established.
+
+This confirms hbg1 has a working redundant internal route feed.
 ## Route policy
 
 Clanker to hbg1:
@@ -101,20 +129,24 @@ Clanker to hbg1:
 - sets itself as next hop
 - uses RFC 8950 for IPv4
 
-hbg1 to Clanker:
+hbg1 to both internal core peers:
 
 - currently exports only:
   - `172.20.220.53/32`
   - `fdf0:e12c:5528::53/128`
 
-hbg1 therefore has a full routing view but is not currently selected by Clanker
-as a path to arbitrary remote DN42 networks.
+hbg1 therefore receives redundant full routing views from both VPS edges but
+does not currently provide a third-party transit path between them.
 
 ## ROA validation
 
-Both Clanker and hbg1 use generated DN42 ROA tables.
+All three internal routers use generated DN42 ROA tables.
 
 Clanker:
+- `/etc/bird/roa_dn42.conf`
+- `/etc/bird/roa_dn42_v6.conf`
+
+ScopeCreep:
 - `/etc/bird/roa_dn42.conf`
 - `/etc/bird/roa_dn42_v6.conf`
 
@@ -159,7 +191,14 @@ sudo sockstat -46l
 Do not tighten the remainder of PF blindly. Account for WireGuard, BGP, native
 IPv6, forwarding, and future external peer interfaces.
 
-## Next topology milestone
+## Current next steps
 
-Build the direct hbg1 <-> ScopeCreep WireGuard/iBGP leg, validate route exchange,
-then test failure behavior with each core path removed one at a time.
+The three-router mesh and initial hbg1 failover test are complete.
+
+Future internal-core work:
+
+- periodically re-test failover after major routing-policy changes
+- add looking-glass / monitoring visibility
+- decide how future external hbg1-learned routes should propagate internally
+- add DN42 BGP community metadata in a separate change without immediately
+  changing route-selection policy

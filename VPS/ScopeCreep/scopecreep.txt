@@ -2,7 +2,7 @@ SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through direct DN42 edge peering, controlled iEdon transit, and the addition of hbg1 as a third internal/residential router on 2026-09-30.
+Updated through controlled iEdon/Kioubit transit and completion of the three-router hbg1 internal mesh on 2026-09-30.
 
 PURPOSE
 -------
@@ -14,11 +14,12 @@ ScopeCreep is DN42 edge/router #2 for AS4242420425. In addition to its
 dedicated WireGuard/iBGP core to Clanker, it now has three direct external
 eBGP peers: iEdon (Dallas), Kioubit (Los Angeles), and MOE233 (Las Vegas).
 
-ScopeCreep also provides controlled IPv4 and IPv6 DN42 transit to iEdon. The
-transit design uses a separate BIRD routing view and Linux policy-routing table
-that excludes routes learned directly from iEdon, so traffic arriving from
-iEdon is forwarded through an alternate peer instead of hairpinning back to
-iEdon. The iEdon peer is capped at 50 Mbps in both directions.
+ScopeCreep provides controlled IPv4 and IPv6 DN42 transit to iEdon and
+Kioubit. Each transit peer has a separate BIRD routing view and Linux
+policy-routing table. Third-party routes learned from the ingress peer are
+excluded from that peer's return view, while AS-path-length-1 directly
+originated prefixes remain reachable over the direct session. Both transit
+peer interfaces are capped at 50 Mbps in each direction.
 
 This file is intended to answer:
 - What is ScopeCreep?
@@ -132,6 +133,24 @@ Dedicated DN42 router core:
         enabled
         active
 
+Dedicated hbg1 DN42 core:
+    Interface:
+        wg-dn42-hbg1
+
+    ScopeCreep:
+        192.168.252.9/30
+        fd42:42:42:252::9/126
+
+    hbg1:
+        192.168.252.10/30
+        fd42:42:42:252::a/126
+
+    UDP:
+        51824
+
+    Config:
+        /etc/wireguard/wg-dn42-hbg1.conf
+
 DN42 loopback identities:
     ns2/service:
         172.20.220.51/32
@@ -176,11 +195,13 @@ Default policy:
 SSH:
     TCP/22 allowed from private WireGuard ranges.
 
-DN42 core:
+DN42 cores:
     UDP/51822 allowed publicly for wg-dn42-core.
+    UDP/51824 allowed publicly for wg-dn42-hbg1.
 
 iBGP:
-    TCP/179 allowed on wg-dn42-core as required for Clanker.
+    TCP/179 allowed on wg-dn42-core for Clanker.
+    TCP/179 allowed on wg-dn42-hbg1 for hbg1.
 
 DNS:
     ns2 listens on the dedicated .51 / ::51 addresses.
@@ -190,31 +211,33 @@ ScopeCreep:
     172.20.220.51 TCP/UDP 53
     fdf0:e12c:5528::51 TCP/UDP 53
 
-Controlled DN42 transit is enabled for iEdon only.
+Controlled DN42 transit is enabled for iEdon and Kioubit.
 
-Allowed forwarding exits from wg-dn42-iedon:
-    wg-dn42-kioubit
-    wg-dn42-moe233
-    wg-dn42-core (toward Clanker)
-
-UFW retains a default routed policy of deny; only these explicit iEdon transit
-paths are allowed.
-
-Transit policy routing:
+iEdon policy routing:
     Linux routing table: 2190
     IPv4/IPv6 rule priority: 21880
     Match: iif wg-dn42-iedon
     Action: lookup table 2190
 
+Kioubit policy routing:
+    Linux routing table: 2191
+    IPv4/IPv6 rule priority: 21881
+    Match: iif wg-dn42-kioubit
+    Action: lookup table 2191
+
+UFW retains a default routed policy of deny. Explicit transit exits are allowed
+per peer, along with same-interface forwarding required for each peer's directly
+originated prefixes.
+
 Persistence:
     /etc/systemd/system/dn42-iedon-transit-policy.service
-    enabled and active as of 2026-09-28.
+    /etc/systemd/system/dn42-iedon-rate-limit.service
+    /etc/systemd/system/dn42-kioubit-transit-policy.service
+    /etc/systemd/system/dn42-kioubit-rate-limit.service
 
-Rate limiting on wg-dn42-iedon:
-    egress: tc TBF, 50 Mbit/s
-    ingress: tc clsact + police, 50 Mbit/s
-    service: /etc/systemd/system/dn42-iedon-rate-limit.service
-    enabled and active as of 2026-09-28.
+Rate limiting:
+    wg-dn42-iedon: 50 Mbit/s in each direction
+    wg-dn42-kioubit: 50 Mbit/s in each direction
 
 ===============================================================================
 4. DN42
@@ -229,9 +252,9 @@ Registered prefixes:
 
 ScopeCreep role:
     DN42 edge/router #2
-    internal iBGP router to Clanker
+    internal iBGP router to Clanker and hbg1
     secondary authoritative DNS
-    controlled transit provider to iEdon
+    controlled transit provider to iEdon and Kioubit
 
 Routing daemon:
     BIRD 2.17.5
@@ -241,15 +264,20 @@ Internal core:
     clanker_core_v6    Established
     wg-dn42-core       192.168.252.2/30, fe80::425:2/64
 
-Residential POP / planned mesh leg:
-    hbg1 is now a third BIRD router in AS4242420425.
+    hbg1_core          Established
+    wg-dn42-hbg1       192.168.252.9/30, fd42:42:42:252::9/126
+
+Residential POP / completed mesh leg:
+    hbg1 is the third BIRD router in AS4242420425.
     hbg1 DN42 identities:
         172.20.220.53/32
         fdf0:e12c:5528::53/128
 
-    hbg1 currently reaches the internal DN42 topology through its direct
-    Clanker core. A direct ScopeCreep <-> hbg1 WireGuard/iBGP session is
-    planned to complete the three-router iBGP full mesh.
+    ScopeCreep now has a direct WireGuard/iBGP core to hbg1 over native
+    residential IPv6. The IPv6 BGP session carries both IPv4 and IPv6 NLRI
+    using RFC 8950 Extended Next Hop for IPv4.
+
+    Clanker, ScopeCreep, and hbg1 now form a complete three-router iBGP mesh.
 
     hbg1 is a FreeBSD residential POP on a 200 Mbps home connection. Manual
     external peering requests may target it, but each peer is intended to be
@@ -274,6 +302,7 @@ Direct external peers verified 2026-09-28:
     WireGuard interface: wg-dn42-kioubit
     local UDP port: 23914
     remote BGP link-local: fe80::ade0
+    relationship experiment: Full Table / Full Transit
     state: Established
 
 3. MOE233 Las Vegas
@@ -285,12 +314,18 @@ Direct external peers verified 2026-09-28:
     state: Established
 
 External export policy:
-    Kioubit and MOE233 retain the normal peer policy.
-    iEdon has a peer-specific full-table export policy that:
-        - always exports AS4242420425's own registered prefixes
-        - rejects paths that already contain AS4242422189
-        - rejects standard NO_EXPORT / NO_ADVERTISE communities
-        - exports other valid DN42 routes
+    MOE233 retains the normal own-prefix-only export policy.
+
+    iEdon and Kioubit are explicit controlled-transit peers. Their IPv4/IPv6
+    channels use sorted BIRD master tables plus `secondary on`, allowing BIRD
+    to advertise an alternate candidate when the selected best route was
+    learned from that same peer and is rejected by the export filter.
+
+    Both full-table export filters:
+        - always export AS4242420425's own registered prefixes
+        - reject paths already containing the destination peer ASN
+        - reject standard NO_EXPORT / NO_ADVERTISE communities
+        - export other valid DN42 routes
 
 Observed iEdon route exchange after enabling Full Table on 2026-09-28:
     IPv4 imported: ~1260
@@ -319,8 +354,10 @@ Linux kernel routing table:
 
 Design:
     master4/master6
-        -> pipe every route except routes whose source protocol is iedon_dal
-        -> iedon_transit4/iedon_transit6
+        -> copy alternate routes into iedon_transit4/iedon_transit6
+        -> reject third-party routes learned through iedon_dal
+        -> preserve iEdon routes with AS-path length 1 so directly originated
+           iEdon prefixes remain on the direct session
         -> kernel table 2190
 
 Linux policy rules:
@@ -328,8 +365,9 @@ Linux policy rules:
     from all iif wg-dn42-iedon lookup 2190
 
 This allows traffic arriving from iEdon to use the best alternate path through
-Kioubit, MOE233, or Clanker instead of selecting a route learned directly from
-iEdon and hairpinning it back to the same peer.
+Kioubit, MOE233, or Clanker for third-party destinations without using iEdon
+as its own transit provider. Prefixes directly originated by iEdon remain
+reachable over the direct iEdon session.
 
 Persistence:
     /etc/systemd/system/dn42-iedon-transit-policy.service
@@ -383,6 +421,46 @@ Persistence:
 
 Operational status helper:
     iedon-transit-status.sh
+
+KIOUBIT TRANSIT ROUTING VIEW
+----------------------------
+
+BIRD tables:
+    kioubit_transit4
+    kioubit_transit6
+
+BIRD protocols:
+    kioubit_transit_pipe4
+    kioubit_transit_pipe6
+    kioubit_transit_kernel4
+    kioubit_transit_kernel6
+
+Linux kernel routing table:
+    2191
+
+Linux policy rule:
+    priority 21881
+    from all iif wg-dn42-kioubit lookup 2191
+
+Design:
+    third-party routes learned through kioubit_lax are excluded from the
+    Kioubit return view, while Kioubit routes with AS-path length 1 are retained
+    so directly originated Kioubit prefixes remain on the direct session.
+
+Firewall:
+    explicit forwarding to intended alternate exits
+    same-interface forwarding permitted for Kioubit directly originated routes
+
+Rate limit:
+    50 Mbit/s in each direction
+
+Verification 2026-09-30:
+    Kioubit remote diagnostics reported IPv4, IPv6, MTU, and routing healthy.
+    The earlier suboptimal-routing warning disappeared after preserving direct
+    origin routes and permitting same-interface forwarding.
+
+    Actual third-party traffic from iEdon was observed entering ScopeCreep on
+    wg-dn42-iedon and leaving through wg-dn42-kioubit.
 
 OWN PREFIX ORIGINATION
 ----------------------
@@ -689,10 +767,10 @@ SSH:
     private WireGuard scoped
 
 DN42:
-    iBGP limited to wg-dn42-core
+    iBGP limited to wg-dn42-core and wg-dn42-hbg1
     authoritative DNS intentionally reachable on .51 / ::51
-    controlled iEdon transit enabled through explicit policy-routing/firewall rules
-    iEdon peer capped at 50 Mbps in both directions
+    controlled iEdon/Kioubit transit enabled through explicit policy-routing/firewall rules
+    iEdon and Kioubit peers capped at 50 Mbps in both directions
 
 Secret-bearing files under /etc/vps-backup and other private credentials must
 never be committed publicly.
@@ -708,13 +786,15 @@ Suggested high-level rebuild order:
 3. Restore public networking.
 4. Install WireGuard, BIRD, NSD, Docker/Compose, UFW, and required utilities.
 5. Restore private wg0 and other required WireGuard configuration.
-6. Restore wg-dn42-core configuration.
-7. Enable/start:
-       wg-quick@wg-dn42-core
+6. Restore wg-dn42-core and wg-dn42-hbg1 configuration.
+7. Enable/start both DN42 core WireGuard interfaces.
 8. Verify:
        192.168.252.2/30
        fe80::425:2/64
+       192.168.252.9/30
+       fd42:42:42:252::9/126
        Clanker core reachability
+       hbg1 core reachability
 9. Restore:
        /etc/systemd/system/dn42-loopback.service
 10. Enable/start dn42-loopback.service.
@@ -727,8 +807,9 @@ Suggested high-level rebuild order:
 13. Verify:
        clanker_core Established
        clanker_core_v6 Established
+       hbg1_core Established
        DN42 route tables populated
-       only intended local /32 and /128 routes originate toward Clanker
+       only intended local /32 and /128 routes originate toward internal peers
 14. Restore NSD configuration and start nsd.service.
 15. Verify AXFR/NOTIFY from Clanker.
 16. Verify authoritative answers over .51 and ::51.
@@ -772,6 +853,13 @@ ScopeCreep
    |             fe80::425:1
    |             AS4242420425 edge #1
    |
+   +-- wg-dn42-hbg1
+   |     192.168.252.9/30
+   |     fd42:42:42:252::9/126
+   |        |
+   |        +-- iBGP -> hbg1
+   |             residential FreeBSD POP
+   |
    +-- lo DN42 identities
    |     172.20.220.51  ns2
    |     172.20.220.52  router
@@ -781,16 +869,18 @@ ScopeCreep
    +-- NSD secondary authoritative DNS
    |
    +-- BIRD 2.17.5
-   |     iBGP core -> Clanker
+   |     iBGP core -> Clanker / hbg1
    |     eBGP -> iEdon / Kioubit / MOE233
    |     iEdon alternate transit view -> Linux table 2190
+   |     Kioubit alternate transit view -> Linux table 2191
    |
    +-- wg-dn42-iedon
    |     full-table BGP + controlled IPv4/IPv6 transit
    |     50 Mbps ingress/egress cap
    |
    +-- wg-dn42-kioubit
-   |     external DN42 peer / transit exit
+   |     full-table BGP + controlled IPv4/IPv6 transit
+   |     50 Mbps ingress/egress cap
    |
    +-- wg-dn42-moe233
    |     external DN42 peer / transit exit
@@ -813,20 +903,22 @@ Backup relationship:
 15. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
 
-1. Observe iEdon transit traffic over several hours/days and record normal
-   throughput, tc overlimits/drops, and WireGuard transfer growth.
+1. Observe iEdon and Kioubit transit traffic over several hours/days and record
+   normal throughput, tc overlimits/drops, and WireGuard transfer growth.
 
-2. Keep the iEdon 50 Mbps rate cap unless there is a deliberate reason to
-   change it. Test any future cap change before making it persistent.
+2. Keep both 50 Mbps transit-peer caps unless there is a deliberate reason to
+   change them. Test any future cap change before making it persistent.
 
 3. Consider adding longer-term byte accounting / monthly transfer alerts for
    DN42 transit so VPS transfer usage cannot surprise the operator.
 
 4. Continue testing failure behavior:
+       iEdon withdrawal
        Kioubit withdrawal
        MOE233 withdrawal
        Clanker/core withdrawal
-       alternate-path selection in table 2190
+       hbg1/core withdrawal
+       alternate-path selection in tables 2190 and 2191
 
 5. Consider whether any other peer should receive transit. Do not broaden the
    shared dnpeers export template; keep relationship-specific policy explicit.
@@ -856,15 +948,15 @@ It currently provides:
     - Beszel agent
     - Cloudflare Tunnel
     - private WireGuard connectivity
-    - dedicated DN42 core WireGuard + iBGP to Clanker
+    - dedicated DN42 core WireGuard + iBGP to Clanker and hbg1
     - direct DN42 eBGP to iEdon, Kioubit, and MOE233
     - full DN42 route visibility from multiple edges
     - persistent DN42 router/service loopback identities
     - secondary authoritative DN42 DNS
-    - controlled full-table IPv4/IPv6 transit for iEdon
-    - alternate-route policy table 2190 for iEdon transit
-    - explicit UFW transit exits
-    - persistent 50 Mbps bidirectional cap on the iEdon peer
+    - controlled full-table IPv4/IPv6 transit for iEdon and Kioubit
+    - alternate-route policy tables 2190 and 2191
+    - explicit UFW transit exits and direct-origin same-interface forwarding
+    - persistent 50 Mbps bidirectional caps on both transit peers
 
 The old Docker/DN42 collision is resolved. The transit experiment has been
 verified in both the control plane and data plane, including green iEdon V4/V6

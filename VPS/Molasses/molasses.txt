@@ -2,15 +2,15 @@ MOLASSES
 ========
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-27
-Updated through current DN42 client routing and primary/secondary authoritative
-DNS verification at 2026-09-27.
+Updated through hbg1 KVM/libvirt deployment, routed residential IPv6, and the
+new Clanker <-> hbg1 DN42 core on 2026-09-30.
 
 PURPOSE
 -------
 Molasses is Kyle's always-on home Debian server. It acts as a local network
 utility host, DNS resolver/filter, Docker application host, monitoring host,
-IRC/web utility host, Matrix homeserver, backup client, and DN42 client routed
-through Clanker over WireGuard.
+IRC/web utility host, Matrix homeserver, backup client, KVM/libvirt host for
+hbg1, and a DN42 client routed through Clanker over WireGuard.
 
 Molasses is not a DN42 BGP router. It is an attached DN42 client/service host
 with its own addresses from AS4242420425's allocation.
@@ -131,13 +131,72 @@ Route-source checks verified 2026-09-27:
         dev wg0
         source 172.20.220.59
 
-    fdf0:e12c:5528::10
+    fdf0:e12c:5528::50
         dev wg0
         source fdf0:e12c:5528::59
 
     fdf0:e12c:5528::51
         dev wg0
         source fdf0:e12c:5528::59
+
+hbg1 virtualization / routed residential IPv6:
+    Hypervisor:
+        libvirt / QEMU-KVM on Molasses
+
+    Guest:
+        hbg1
+        FreeBSD 15.1-RELEASE amd64
+
+    libvirt network:
+        hbg1-net
+        bridge: virbr-hbg1
+        IPv4: 192.168.130.0/24
+        Molasses bridge/gateway: 192.168.130.1
+        hbg1 management address: 192.168.130.2
+        libvirt DNS disabled
+        no DHCP
+
+    Verizon delegated IPv6:
+        2600:4040:f02d:3200::/56
+
+    Home/LAN subnet:
+        2600:4040:f02d:3200::/64
+
+    Routed hbg1 subnet:
+        2600:4040:f02d:3201::/64
+
+    Stable Molasses router address on wifi0:
+        2600:4040:f02d:3200::5/64
+
+    Molasses hbg1 bridge gateway:
+        2600:4040:f02d:3201::1/64
+
+    hbg1 native residential IPv6:
+        2600:4040:f02d:3201::13/64
+
+    Verizon router static route:
+        2600:4040:f02d:3201::/64
+            via 2600:4040:f02d:3200::5
+
+    Persistent Linux routing sysctls:
+        net.ipv6.conf.all.forwarding = 1
+        net.ipv6.conf.wifi0.accept_ra = 2
+        net.ipv6.conf.wifi0.proxy_ndp = 0
+
+    Persistent bridge-address service:
+        /etc/systemd/system/hbg1-bridge-ipv6.service
+
+    Firewall:
+        Molasses UFW default routed policy remains deny.
+        A narrow routed IPv6 rule permits hbg1's WireGuard core UDP/51823
+        toward Clanker's native public IPv6 address.
+
+    DN42:
+        hbg1 is a separate BIRD router, not a BGP process on Molasses.
+        hbg1 reaches Clanker over its own native-IPv6 WireGuard core.
+        hbg1 router identities:
+            172.20.220.53/32
+            fdf0:e12c:5528::53/128
 
 ===============================================================================
 3. FIREWALL / ROUTING
@@ -191,24 +250,37 @@ Current design:
     Molasses does not advertise a separate prefix.
     DN42 routes are provided by Clanker.
 
-Clanker's current DN42 architecture now includes ScopeCreep as an internal
-router and secondary authoritative DNS server:
+AS4242420425 now has three BIRD routers, while Molasses itself remains a
+routed DN42 client:
 
     Clanker edge #1 / ns1
         172.20.220.49 router
         172.20.220.50 ns1
         fdf0:e12c:5528::1 router
-        fdf0:e12c:5528::10 ns1
+        fdf0:e12c:5528::50 ns1
 
                 |
-                | wg-dn42-core + iBGP
+                | existing WireGuard/iBGP core
                 |
 
-    ScopeCreep internal router / ns2
+    ScopeCreep edge #2 / ns2
         172.20.220.52 router
         172.20.220.51 ns2
         fdf0:e12c:5528::52 router
         fdf0:e12c:5528::51 ns2
+
+    Clanker
+        |
+        | native-IPv6 WireGuard core
+        | one IPv6 MP-BGP session carrying IPv4 + IPv6
+        | RFC 8950 Extended Next Hop for IPv4
+        |
+    hbg1 residential FreeBSD POP
+        172.20.220.53/32
+        fdf0:e12c:5528::53/128
+
+    A direct hbg1 <-> ScopeCreep core is planned to complete the three-router
+    iBGP mesh.
 
 Molasses is useful as:
     - an independent DN42 client test point
@@ -228,7 +300,7 @@ Primary authoritative server:
         172.20.220.50
 
     IPv6:
-        fdf0:e12c:5528::10
+        fdf0:e12c:5528::50
 
 Secondary authoritative server:
     ns2.kgivler.dn42
@@ -248,7 +320,7 @@ Direct authoritative SOA tests verified 2026-09-27:
         success
         serial 2026092603
 
-    @fdf0:e12c:5528::10 kgivler.dn42
+    @fdf0:e12c:5528::50 kgivler.dn42
         success
         serial 2026092603
 
@@ -594,7 +666,7 @@ Suggested high-level rebuild order:
        DN42 IPv4 reverse forwarding
        DN42 IPv6 reverse forwarding
 14. Verify direct authoritative reachability to:
-       ns1 .50 / ::10
+       ns1 .50 / ::50
        ns2 .51 / ::51
 15. Restore Cloudflare Tunnel.
 16. Restore minimum Matrix identity/configuration.
@@ -632,7 +704,7 @@ Home LAN / Internet
         |        |
         |        +-- Clanker
         |              AS4242420425 edge #1
-        |              ns1 .50 / ::10
+        |              ns1 .50 / ::50
         |              |
         |              +-- DN42 external peers
         |              |

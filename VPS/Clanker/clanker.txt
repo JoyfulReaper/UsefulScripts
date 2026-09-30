@@ -2,7 +2,7 @@ CLANKER
 =======
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through controlled Baragoon transit and DN42 www/TLS canonicalization work on 2026-09-29.
+Updated through the hbg1 residential POP core, MP-BGP/RFC 8950 validation, and controlled Baragoon transit work on 2026-09-30.
 
 PURPOSE
 -------
@@ -417,7 +417,9 @@ Current Clanker external BGP peers at 2026-09-28 inventory:
         BGP role negotiation
 
 
-Internal DN42 core:
+Internal DN42 cores:
+
+1. Clanker <-> ScopeCreep
     Interface:
         wg-dn42-core
 
@@ -431,12 +433,63 @@ Internal DN42 core:
         scopecreep_core
         scopecreep_core_v6
 
-    State at 2026-09-28 inventory:
+    State:
         Established
 
     Purpose:
         exchanges DN42 routes internally between Clanker and ScopeCreep while
-        keeping external peering edges independent.
+        keeping the two external peering edges independent.
+
+2. Clanker <-> hbg1 residential POP
+    Interface:
+        wg-dn42-hbg1
+
+    Clanker core IPv4:
+        192.168.252.5/30
+
+    hbg1 core IPv4:
+        192.168.252.6/30
+
+    Clanker core IPv6:
+        fd42:42:42:252::5/126
+
+    hbg1 core IPv6:
+        fd42:42:42:252::6/126
+
+    Clanker UDP listen port:
+        51823
+
+    BIRD protocol:
+        hbg1_core
+
+    State verified 2026-09-30:
+        Established
+
+    Underlay:
+        hbg1 initiates WireGuard to Clanker's native public IPv6 endpoint.
+
+    BGP design:
+        one IPv6 iBGP session carries both IPv4 and IPv6 NLRI
+        IPv4 Extended Next Hop / RFC 8950 is required on both sides
+        Clanker exports its valid DN42 feed to hbg1
+        Clanker imports only hbg1's intended local host identities:
+            172.20.220.53/32
+            fdf0:e12c:5528::53/128
+
+    Observed hbg1 feed after full-table enablement:
+        approximately 986 IPv4 routes
+        approximately 906 IPv6 routes
+
+    hbg1 installs IPv4 DN42 routes with the IPv6 next hop:
+        fd42:42:42:252::5
+
+    The direct hbg1 <-> ScopeCreep core is still planned. Until that link and
+    iBGP session exist, the three-router internal topology is not a full mesh.
+
+    hbg1 is also available for manually approved external peering. It is a
+    residential FreeBSD POP on a 200 Mbps connection; external peer traffic is
+    intended to be capped at 5 Mbps in each direction per peer, with no general
+    transit by default and no SLA.
 
 Routing policy:
     Clanker is a multi-edge DN42 router. The default external-peer policy remains

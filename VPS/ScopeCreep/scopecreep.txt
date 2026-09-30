@@ -2,7 +2,7 @@ SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through direct DN42 edge peering, controlled full-table transit for iEdon, policy routing, and 50 Mbps peer rate limiting.
+Updated through direct DN42 edge peering, controlled iEdon transit, and the addition of hbg1 as a third internal/residential router on 2026-09-30.
 
 PURPOSE
 -------
@@ -240,6 +240,21 @@ Internal core:
     clanker_core       Established
     clanker_core_v6    Established
     wg-dn42-core       192.168.252.2/30, fe80::425:2/64
+
+Residential POP / planned mesh leg:
+    hbg1 is now a third BIRD router in AS4242420425.
+    hbg1 DN42 identities:
+        172.20.220.53/32
+        fdf0:e12c:5528::53/128
+
+    hbg1 currently reaches the internal DN42 topology through its direct
+    Clanker core. A direct ScopeCreep <-> hbg1 WireGuard/iBGP session is
+    planned to complete the three-router iBGP full mesh.
+
+    hbg1 is a FreeBSD residential POP on a 200 Mbps home connection. Manual
+    external peering requests may target it, but each peer is intended to be
+    capped at 5 Mbps in each direction and general transit is not offered by
+    default.
 
 Direct external peers verified 2026-09-28:
 

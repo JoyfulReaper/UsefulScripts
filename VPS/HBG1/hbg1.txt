@@ -1,0 +1,470 @@
+HBG1
+====
+Infrastructure / Recovery / DN42 Router Overview
+Snapshot date: 2026-09-30
+
+PURPOSE
+-------
+hbg1 is a FreeBSD 15.1-RELEASE amd64 VM hosted on Molasses. It is the
+residential DN42 POP/router for AS4242420425.
+
+Current roles:
+- FreeBSD routing/BIRD experiment
+- residential DN42 router / POP
+- internal iBGP router
+- future manually approved external DN42 peering point
+- native-IPv6 test point independent of the VPS providers
+
+hbg1 is not currently a general DN42 transit node. It receives a filtered DN42
+table from Clanker and advertises only its own router host identities internally.
+
+===============================================================================
+1. HOST / VIRTUALIZATION
+===============================================================================
+
+Hostname:
+    hbg1
+
+Operating system:
+    FreeBSD 15.1-RELEASE amd64
+
+Hypervisor:
+    QEMU/KVM + libvirt on Molasses
+
+libvirt network:
+    hbg1-net
+
+Bridge:
+    virbr-hbg1
+
+Management IPv4 subnet:
+    192.168.130.0/24
+
+Molasses bridge/gateway:
+    192.168.130.1
+
+hbg1:
+    192.168.130.2/24
+
+Serial console:
+    from Molasses:
+        sudo virsh -c qemu:///system console hbg1
+
+    escape:
+        Ctrl+]
+
+The persistent graphical/VNC display was removed after serial/SSH access was
+working.
+
+===============================================================================
+2. NATIVE RESIDENTIAL IPv6
+===============================================================================
+
+Verizon delegated prefix observed during setup:
+    2600:4040:f02d:3200::/56
+
+Home/LAN /64:
+    2600:4040:f02d:3200::/64
+
+Dedicated routed hbg1 /64:
+    2600:4040:f02d:3201::/64
+
+Molasses stable router address:
+    2600:4040:f02d:3200::5/64
+
+Molasses bridge gateway:
+    2600:4040:f02d:3201::1/64
+
+hbg1 native IPv6:
+    2600:4040:f02d:3201::13/64
+
+hbg1 IPv6 default gateway:
+    2600:4040:f02d:3201::1
+
+Verizon router static route:
+    2600:4040:f02d:3201::/64
+        via 2600:4040:f02d:3200::5
+
+IMPORTANT:
+    This is residential ISP addressing. Treat the delegated prefix as capable
+    of changing in the future. Do not publish the raw residential endpoint as
+    a permanent peering contract. Return current endpoint details when a peer
+    is manually approved.
+
+===============================================================================
+3. PRIVATE MANAGEMENT WIREGUARD
+===============================================================================
+
+Interface:
+    wg0
+
+Addresses:
+    10.99.0.13/32
+    fd42:42:42::13/128
+
+Peer:
+    Clanker
+
+Underlay:
+    IPv4, intentionally pinned to Clanker's public IPv4
+
+Reason:
+    Keep management transport independent from the native-IPv6 DN42 core and
+    avoid hostname/address-family surprises.
+
+Persistent config:
+    /usr/local/etc/wireguard/wg0.conf
+
+Management SSH:
+    SSH is permitted only when traffic arrives on wg0.
+
+===============================================================================
+4. DN42 IDENTITIES
+===============================================================================
+
+ASN:
+    AS4242420425
+
+Registered IPv4 prefix:
+    172.20.220.48/28
+
+Registered IPv6 prefix:
+    fdf0:e12c:5528::/48
+
+hbg1 router IPv4:
+    172.20.220.53/32
+
+hbg1 router IPv6:
+    fdf0:e12c:5528::53/128
+
+Addresses are installed persistently on lo0 through /etc/rc.conf.
+
+===============================================================================
+5. CLANKER CORE
+===============================================================================
+
+Interface:
+    wg-dn42-core
+
+hbg1:
+    192.168.252.6/30
+    fd42:42:42:252::6/126
+
+Clanker:
+    192.168.252.5/30
+    fd42:42:42:252::5/126
+
+WireGuard:
+    Table = off
+
+Meaning:
+    WireGuard AllowedIPs choose the cryptographic peer but do not install the
+    DN42 routing table. BIRD owns routing decisions.
+
+Underlay:
+    native residential IPv6
+
+Clanker WireGuard UDP:
+    51823
+
+Persistent config:
+    /usr/local/etc/wireguard/wg-dn42-core.conf
+
+hbg1 initiates the tunnel. Clanker learns the changing source endpoint rather
+than requiring a fixed residential endpoint on its peer definition.
+
+===============================================================================
+6. BIRD / MP-BGP / RFC 8950
+===============================================================================
+
+BIRD:
+    2.19.1
+
+Config:
+    /usr/local/etc/bird.conf
+
+Router ID:
+    172.20.220.53
+
+Protocol:
+    clanker_core
+
+Session:
+    iBGP
+    local fd42:42:42:252::6
+    neighbor fd42:42:42:252::5
+    AS4242420425 on both sides
+
+One IPv6 BGP TCP session carries:
+    IPv4 NLRI
+    IPv6 NLRI
+
+IPv4 channel:
+    Extended Next Hop enabled and required
+    RFC 8950
+
+Observed proof:
+    real DN42 IPv4 prefixes are installed through IPv6 next hop
+        fd42:42:42:252::5
+    on
+        wg-dn42-core
+
+Observed full-feed snapshot 2026-09-30:
+    clanker_core IPv4:
+        986 imported
+        1 exported
+
+    clanker_core IPv6:
+        906 imported
+        1 exported
+
+Kernel protocol snapshot:
+    kernel4:
+        986 BGP routes exported to the FreeBSD kernel
+
+    kernel6:
+        905 BGP routes exported to the FreeBSD kernel
+
+There is a one-route IPv6 difference worth identifying later. It was not
+treated as a failure because the BGP session, route feed, and kernel protocol
+were otherwise healthy.
+
+hbg1 export policy:
+    advertise only:
+        172.20.220.53/32
+        fdf0:e12c:5528::53/128
+
+hbg1 import policy:
+    accept AS4242420425's own prefixes
+    accept valid DN42 routes whose origin passes the DN42 ROA tables
+    reject everything else
+
+Current transit behavior:
+    hbg1 has only one DN42-facing core neighbor: Clanker.
+    Clanker does not select hbg1 as a path to arbitrary remote DN42 prefixes.
+    Therefore hbg1 is currently a routed POP/leaf router with a full table,
+    not a useful third-party transit path.
+
+===============================================================================
+7. ROA DATA
+===============================================================================
+
+Files:
+    /usr/local/etc/bird/roa_dn42.conf
+    /usr/local/etc/bird/roa_dn42_v6.conf
+
+Updater:
+    /usr/local/sbin/update-dn42-roa
+
+Repository copy:
+    VPS/HBG1/update-dn42-roa.sh
+
+The FreeBSD updater uses the base-system fetch(1) utility instead of requiring
+curl.
+
+Recommended root cron:
+    */15 * * * * /usr/local/sbin/update-dn42-roa
+
+The updater:
+- downloads both generated DN42 BIRD 2 ROA files
+- rejects suspiciously small downloads
+- skips reload when data is unchanged
+- backs up the current files
+- validates /usr/local/etc/bird.conf
+- reloads BIRD only after validation
+- restores previous ROA data if validation/reload fails
+
+===============================================================================
+8. FIREWALL
+===============================================================================
+
+Firewall:
+    PF
+
+Persistence:
+    pf_enable="YES"
+
+Current intentionally small ruleset:
+    set skip on lo0
+
+    pass in quick on wg0 proto tcp to port 22 keep state
+    block in log quick proto tcp to port 22
+
+    pass all
+
+Effect:
+    SSH arriving on wg0:
+        allowed
+
+    SSH arriving on vtnet0/native residential IPv6:
+        blocked
+
+    SSH arriving through the DN42 core:
+        blocked
+
+    all non-SSH traffic:
+        currently unchanged/allowed
+
+This was deliberately kept minimal until the listening-socket inventory is
+reviewed.
+
+Audit listeners with:
+    sudo sockstat -46l
+
+Useful narrower views:
+    sudo sockstat -46l -P tcp
+    sudo sockstat -46l -P udp
+
+PF rules:
+    sudo pfctl -sr
+
+PF status:
+    sudo pfctl -s info
+
+Logged blocks:
+    sudo tcpdump -ni pflog0 'tcp port 22'
+
+===============================================================================
+9. ROUTER FORWARDING / PERSISTENCE
+===============================================================================
+
+/etc/rc.conf includes:
+    hostname="hbg1"
+
+    ifconfig_vtnet0="inet 192.168.130.2/24"
+    defaultrouter="192.168.130.1"
+
+    ifconfig_vtnet0_ipv6="inet6 2600:4040:f02d:3201::13 prefixlen 64"
+    ipv6_defaultrouter="2600:4040:f02d:3201::1"
+
+    ifconfig_lo0_alias0="inet 172.20.220.53/32"
+    ifconfig_lo0_alias1="inet6 fdf0:e12c:5528::53 prefixlen 128"
+
+    gateway_enable="YES"
+    ipv6_gateway_enable="YES"
+
+    wireguard_enable="YES"
+    wireguard_interfaces="wg0 wg-dn42-core"
+
+    bird_enable="YES"
+    pf_enable="YES"
+
+Forwarding verified after reboot:
+    net.inet.ip.forwarding = 1
+    net.inet6.ip6.forwarding = 1
+
+A reboot already verified persistence of:
+- vtnet0 IPv4
+- native IPv6
+- IPv4/IPv6 default routes
+- DN42 loopbacks
+- forwarding
+- WireGuard
+- BIRD
+
+PF was enabled afterward and should be included in the next reboot validation.
+
+===============================================================================
+10. EXTERNAL PEERING POLICY
+===============================================================================
+
+hbg1 is available for manually approved DN42 peering requests.
+
+Environment:
+    residential FreeBSD POP
+    Harrisburg, PA
+    approximately 200 Mbps residential Internet connection
+
+Per-peer cap:
+    5 Mbps in each direction
+
+Policy:
+    best effort
+    no SLA
+    no general third-party transit by default
+    valid DN42 registry/ROA objects required
+    WireGuard preferred
+    MP-BGP / IPv6 transport preferred where practical
+    fresh WireGuard keypair per peer
+
+Reason for the conservative cap:
+    hbg1 shares a residential connection with normal home traffic. The goal is
+    useful topology diversity and experimentation, not turning the house into
+    a bargain transit provider.
+
+If multiple peers are eventually added, consider an additional aggregate hbg1
+DN42 bandwidth cap so many 5 Mbps peers cannot collectively dominate the home
+connection.
+
+===============================================================================
+11. PLANNED SCOPECREEP CORE
+===============================================================================
+
+TODO:
+    Build a direct hbg1 <-> ScopeCreep WireGuard core and iBGP session.
+
+Purpose:
+    Complete the three-router iBGP mesh:
+        Clanker
+        ScopeCreep
+        hbg1
+
+Why full mesh:
+    Normal iBGP split-horizon behavior means a router does not simply
+    re-advertise routes learned from one ordinary iBGP peer to another.
+    With only three routers, a direct full mesh is simpler than introducing a
+    route reflector.
+
+Preferred design:
+    native IPv6 underlay where practical
+    MP-BGP
+    RFC 8950 for IPv4 NLRI if both sides support the chosen session design
+
+===============================================================================
+12. RECOVERY ORDER
+===============================================================================
+
+Suggested rebuild:
+1. Recreate the FreeBSD 15.1 VM on Molasses.
+2. Restore vtnet0 IPv4 and routed native IPv6.
+3. Restore SSH/admin keys and serial-console access.
+4. Restore management wg0.
+5. Verify SSH through 10.99.0.13.
+6. Restore DN42 loopback identities.
+7. Enable IPv4/IPv6 forwarding.
+8. Restore wg-dn42-core to Clanker.
+9. Verify WireGuard handshake and core-address reachability.
+10. Install/restore BIRD.
+11. Restore ROA tables and update-dn42-roa.
+12. Validate BIRD config before starting/reloading it.
+13. Verify clanker_core Established with IPv4 + IPv6 channels.
+14. Verify DN42 route counts and kernel route installation.
+15. Restore PF and verify SSH is only reachable through wg0.
+16. Verify end-to-end DN42 reachability.
+17. Restore any future external peers one at a time.
+
+===============================================================================
+13. KNOWN NEXT ACTIONS
+===============================================================================
+
+1. Run and record `sudo sockstat -46l`; decide whether PF should restrict any
+   listeners besides SSH.
+
+2. Install/test the FreeBSD-native ROA updater and add the 15-minute root cron.
+
+3. Identify the one-route IPv6 difference between clanker_core imported routes
+   and kernel6 exported routes.
+
+4. Test representative IPv4 and IPv6 DN42 destinations from hbg1.
+
+5. Build the direct hbg1 <-> ScopeCreep core/iBGP leg.
+
+6. Reboot Molasses later to verify routed-/64 bridge persistence, IPv6
+   forwarding/RA behavior, and the narrow UFW forwarding rule.
+
+7. When the first external hbg1 peer is approved, implement and verify the
+   promised 5 Mbps-per-direction limiter before enabling general peer traffic.
+
+===============================================================================
+END
+===============================================================================

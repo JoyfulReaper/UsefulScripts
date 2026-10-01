@@ -12,7 +12,7 @@ param(
 
     [int]$KeepLast = 3,
 
-    [switch]$SkipPrune
+    [switch]$SkipRetention
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,7 +38,6 @@ Require-EnvVar "RESTIC_PASSWORD"
 $exportDir = Join-Path $StagingRoot $VmName
 
 $startedAt = Get-Date
-$snapshotCreated = $false
 
 Write-Step "Backup starting"
 Write-Host "VM:          $VmName"
@@ -57,14 +56,14 @@ try {
         throw "VM has checkpoints. Refusing backup until checkpoints are reviewed/merged."
     }
 
-	Write-Step "Checking staging directory"
+    Write-Step "Checking staging directory"
 
-	if (Test-Path $exportDir) {
-		throw "Staging directory already exists: $exportDir. A previous backup may have failed; inspect it before continuing."
-	}
+    if (Test-Path $exportDir) {
+        throw "Staging directory already exists: $exportDir. A previous backup may have failed; inspect it before continuing."
+    }
 
-	Write-Step "Creating staging directory"
-	New-Item -ItemType Directory -Path $exportDir | Out-Null
+    Write-Step "Creating staging directory"
+    New-Item -ItemType Directory -Path $exportDir | Out-Null
 
     Write-Step "Exporting VM"
     Export-VM -Name $VmName -Path $exportDir
@@ -75,34 +74,32 @@ try {
     Write-Host "Export size: $exportGiB GiB"
 
     Write-Step "Running restic backup"
-	restic -r $Repository backup $exportDir `
-		--tag hyperv `
-		--tag $VmName `
-		--limit-upload $LimitUploadKiB
+    restic -r $Repository backup $exportDir `
+        --tag hyperv `
+        --tag $VmName `
+        --limit-upload $LimitUploadKiB
 
     if ($LASTEXITCODE -ne 0) {
         throw "restic backup failed with exit code $LASTEXITCODE"
     }
 
-    $snapshotCreated = $true
+    Write-Step "Listing snapshots"
+    restic -r $Repository snapshots --tag "hyperv,$VmName"
 
-	Write-Step "Listing snapshots"
-	restic -r $Repository snapshots --tag "hyperv,$VmName"
+    if (-not $SkipRetention) {
+        Write-Step "Applying retention"
 
-	if (-not $SkipPrune) {
-		Write-Step "Applying retention"
+        restic -r $Repository forget `
+            --tag "hyperv,$VmName" `
+            --keep-last $KeepLast
 
-		restic -r $Repository forget `
-			--tag "hyperv,$VmName" `
-			--keep-last $KeepLast
-
-		if ($LASTEXITCODE -ne 0) {
-			throw "restic forget failed with exit code $LASTEXITCODE"
-		}
-	}
-	else {
-		Write-Step "Skipping retention"
-	}
+        if ($LASTEXITCODE -ne 0) {
+            throw "restic forget failed with exit code $LASTEXITCODE"
+        }
+    }
+    else {
+        Write-Step "Skipping retention"
+    }
 
     Write-Step "Cleaning staging export"
     Remove-Item $exportDir -Recurse -Force

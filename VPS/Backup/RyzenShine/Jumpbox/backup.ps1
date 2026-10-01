@@ -8,6 +8,11 @@ $GenericScript = Join-Path $PSScriptRoot 'Backup-HyperVVmToRestic.ps1'
 
 if (-not (Test-Path -LiteralPath $GenericScript -PathType Leaf))
 {
+    $GenericScript = 'C:\GitHub\UsefulScripts\windows\hyperv\Backup-HyperVVmToRestic.ps1'
+}
+
+if (-not (Test-Path -LiteralPath $GenericScript -PathType Leaf))
+{
     throw "Generic Hyper-V restic backup script is missing: $GenericScript"
 }
 

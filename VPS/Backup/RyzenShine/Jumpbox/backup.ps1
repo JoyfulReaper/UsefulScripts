@@ -166,19 +166,12 @@ try
 
     Write-Log "Applying remote retention: keep newest $RetentionCopies copies."
 
-    $retentionCommand = @"
-set -e
-cd '$RemoteBase'
-find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
-  sort -nr |
-  tail -n +$($RetentionCopies + 1) |
-  cut -d' ' -f2- |
-  while IFS= read -r olddir; do
-    [ -n "`$olddir" ] || continue
-    echo "Removing old backup directory: `$olddir"
-    rm -rf -- "`$olddir"
-  done
-"@
+    # Keep this as a single-line remote command. A PowerShell here-string uses
+    # Windows CRLF line endings, which bash on FrontDesk can interpret as
+    # literal carriage returns when passed as one ssh argument.
+    $retentionStart = $RetentionCopies + 1
+    $retentionCommand =
+        "cd '$RemoteBase' && find . -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' | sort -nr | tail -n +$retentionStart | cut -d' ' -f2- | xargs -r rm -rf --"
 
     Invoke-Native -FilePath 'ssh.exe' -Arguments (
         $sshBase + @($retentionCommand)

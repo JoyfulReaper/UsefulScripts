@@ -2,7 +2,7 @@ CLANKER
 =======
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through the hbg1 residential POP core, MP-BGP/RFC 8950 validation, and controlled Baragoon transit work on 2026-09-30.
+Updated through the hbg1 residential POP core, MP-BGP/RFC 8950 validation, controlled Baragoon transit work on 2026-09-30, and the Clanker backup/recovery audit on 2026-10-01.
 
 PURPOSE
 -------
@@ -1056,6 +1056,12 @@ Important running host services at 2026-09-25 inventory include:
 
 Additional custom/local host-managed components known on Clanker include:
     dn42-dummy.service
+    devsite.service
+        serves dev.kgivler.com
+        deployed executable:
+            /usr/local/bin/devsite
+        source/build tree:
+            /opt/kgivler_com/dev
     molasses-watch.service
     molasses-watch.timer
     vpn-landing
@@ -1305,6 +1311,9 @@ Deployment/configuration trees:
     /opt/ygglanding
     /opt/vpn-landing
     /opt/missioncontrol-agent
+    /opt/kgivler_com
+        contains the source used to build /usr/local/bin/devsite for
+        dev.kgivler.com
 
 ===============================================================================
 16. KNOWN DATABASES / STATE STORES
@@ -1647,7 +1656,21 @@ Deployment/configuration trees:
     /opt/ygglanding
     /opt/vpn-landing
     /opt/missioncontrol-agent
+    /opt/kgivler_com
     /opt/joyful-stack
+
+Host-local deployed/admin tooling:
+    /usr/local/bin/devsite
+        Go binary for dev.kgivler.com; source is /opt/kgivler_com/dev
+    /usr/local/sbin/dn42-peering-admin
+        small local DN42 administration helper without a currently identified
+        tracked source copy
+
+The rest of /usr/local/bin is not backed wholesale. At the 2026-10-01 audit,
+most of its ~46 MiB was explained by rebuildable Go binaries:
+    devsite
+    dn42landing
+    dn42landing.bak-before-live-page-update
 
 DN42Landing state:
     /var/lib/dn42landing/peering.db
@@ -1810,7 +1833,10 @@ P2 - useful/reproducible configuration and deployment trees:
     /opt/ygglanding
     /opt/vpn-landing
     /opt/missioncontrol-agent
+    /opt/kgivler_com
     /opt/joyful-stack
+    /usr/local/bin/devsite
+    /usr/local/sbin/dn42-peering-admin
     UsefulScripts checkout
 
 P3 - useful operational/history state:
@@ -1958,7 +1984,8 @@ Suggested high-level rebuild order:
 
 18. Restore/start nginx and cloudflared.
 
-19. Restore/start Mission Control Agent and other required host services.
+19. Restore/start Mission Control Agent and other required host services,
+    including devsite for dev.kgivler.com.
 
 20. Restore/check peer restic repositories hosted on Clanker.
 

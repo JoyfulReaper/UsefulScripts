@@ -20,6 +20,7 @@ Operational notes for working in this repository.
 
 ## Backup conventions
 
+- Backblaze B2 is currently considered **broken / under investigation** for this environment. Do not treat B2 success-path code or old successful logs as proof that it is a viable free off-site destination. Re-evaluate pricing/limits and actual restore/maintenance behavior before relying on it.
 - Linux VPS backup tooling lives under `VPS/Backup/<Host>/`.
 - Restic is the preferred backup mechanism.
 - Keep repository maintenance (forget/prune/check) distinct from ordinary backup runs when practical.

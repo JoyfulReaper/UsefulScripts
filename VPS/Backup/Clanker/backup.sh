@@ -451,6 +451,29 @@ fi
 
 
 #
+# Dozzle state
+#
+
+CURRENT_STAGE="Dozzle state snapshot"
+
+readonly DOZZLE_VOLUME="/var/lib/docker/volumes/dozzle_dozzle_data/_data"
+
+if [[ -d "$DOZZLE_VOLUME" ]]; then
+    log "Staging Dozzle state."
+
+    mkdir -p "$VOLUME_STAGE/dozzle_dozzle_data"
+
+    rsync_safe \
+        -aHAX \
+        --numeric-ids \
+        "$DOZZLE_VOLUME/" \
+        "$VOLUME_STAGE/dozzle_dozzle_data/"
+else
+    log "WARNING: Dozzle volume not found."
+fi
+
+
+#
 # NATS JetStream
 #
 

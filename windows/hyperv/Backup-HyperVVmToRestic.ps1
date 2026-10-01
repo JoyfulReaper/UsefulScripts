@@ -56,11 +56,35 @@ function Import-DpapiSecret {
         throw "Secret file is empty: $Path"
     }
 
+    if ($protectedValue.StartsWith("dpapi-machine-v1:")) {
+        $cipherBytes = [Convert]::FromBase64String(
+            $protectedValue.Substring("dpapi-machine-v1:".Length)
+        )
+
+        try {
+            $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect(
+                $cipherBytes,
+                $null,
+                [Security.Cryptography.DataProtectionScope]::LocalMachine
+            )
+
+            try {
+                return [Text.Encoding]::UTF8.GetString($plainBytes)
+            }
+            finally {
+                [Array]::Clear($plainBytes, 0, $plainBytes.Length)
+            }
+        }
+        finally {
+            [Array]::Clear($cipherBytes, 0, $cipherBytes.Length)
+        }
+    }
+
     try {
         $secureValue = ConvertTo-SecureString -String $protectedValue
     }
     catch {
-        throw "Unable to decrypt secret file '$Path'. It must be created and read by the same Windows user."
+        throw "Unable to decrypt legacy CurrentUser DPAPI secret '$Path'."
     }
 
     $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)

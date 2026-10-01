@@ -1,0 +1,644 @@
+FRONTDESK
+=========
+Production / Storage VPS Inventory and Recovery Notes
+Initial commissioning: 2026-09-30
+
+PURPOSE
+-------
+FrontDesk is the intentionally boring production/storage VPS.
+
+Primary roles:
+- stable Linux production host for selected services;
+- approximately 1 TB of bulk storage for archives, downloads, backups and staging;
+- private management through the existing WireGuard network;
+- Mission Control fleet node;
+- possible future clearnet web/application host.
+
+Current policy:
+- keep DN42/Yggdrasil/tcpnoise/random routing experiments off this host unless its role is deliberately changed;
+- do not add a nested client VM just because /dev/kvm exists;
+- prefer simple service/container isolation for future workloads;
+- do not treat FrontDesk's own 1 TB disk as independent disaster recovery for FrontDesk itself.
+
+This file contains operational information, not secrets.
+
+===============================================================================
+1. PROVIDER / PLAN
+===============================================================================
+
+Provider:
+    GreenCloud
+
+Plan:
+    IL10GbpsStorage-1
+
+Location:
+    Chicago, IL DC2
+
+Initial price:
+    $45/year
+
+Advertised resources:
+    2 vCPU
+    3 GB RAM
+    40 GB NVMe OS disk
+    1 TB SATA RAID-10 storage disk
+    6 TB/month transfer
+    10 Gbps shared port
+    1 public IPv4
+    /64 public IPv6
+
+Provider recovery:
+    VirtFusion / provider VNC-console path
+
+SSH policy:
+    Public SSH intentionally blocked.
+    Provider console/VNC is the break-glass path if WireGuard management fails.
+
+===============================================================================
+2. HOST
+===============================================================================
+
+Hostname:
+    frontdesk.kgivler.com
+
+OS:
+    Debian 13 (trixie)
+
+Architecture:
+    x86_64
+
+Virtualization:
+    KVM / QEMU
+    QEMU i440FX virtual hardware
+
+Kernel observed after commissioning reboot:
+    6.12.111+deb13-amd64
+
+CPU:
+    2 vCPU
+    Intel Xeon Processor (Skylake, IBRS)
+
+RAM:
+    approximately 2.9 GiB usable
+
+Swap:
+    /swap.img
+    1 GiB
+
+Primary administrator:
+    joyfulreaper
+
+System health after commissioning reboot:
+    0 failed systemd units
+
+===============================================================================
+3. PUBLIC NETWORK
+===============================================================================
+
+Public IPv4:
+    173.249.221.118
+
+IPv4 gateway:
+    173.249.221.1
+
+Public IPv6:
+    2607:9000:1000:81ab::a/64
+
+IPv6 gateway:
+    2607:9000:1000:8000::1
+
+Observed home -> FrontDesk IPv6 latency during commissioning:
+    approximately 25-26 ms
+
+===============================================================================
+4. MANAGEMENT WIREGUARD
+===============================================================================
+
+Interface:
+    wg0
+
+FrontDesk IPv4:
+    10.99.0.14/24
+
+FrontDesk IPv6:
+    fd42:42:42::14/64
+
+Hub:
+    Clanker
+
+Hub management IPv4:
+    10.99.0.1
+
+Hub management IPv6:
+    fd42:42:42::1
+
+Hub public endpoint:
+    142.4.38.224:51820
+
+Config:
+    /etc/wireguard/wg0.conf
+
+Local key files:
+    /etc/wireguard/frontdesk.key
+    /etc/wireguard/frontdesk.pub
+
+IMPORTANT:
+    Never commit or print the private key.
+
+Service:
+    wg-quick@wg0.service
+    enabled
+
+PersistentKeepalive:
+    25 seconds
+
+Allowed private routes:
+    10.99.0.0/24
+    fd42:42:42::/64
+
+Typical commissioning latency FrontDesk <-> Clanker:
+    approximately 19-20 ms
+
+Reboot verification:
+    Passed. wg0 was recreated by systemd and handshook with Clanker.
+
+===============================================================================
+5. SSH / JUMP BOX / FIREWALL
+===============================================================================
+
+SSH policy:
+    WireGuard-only management;
+    key authentication only;
+    root login disabled;
+    password authentication disabled.
+
+SSH hardening drop-in:
+    /etc/ssh/sshd_config.d/99-frontdesk.conf
+
+Expected settings:
+    PermitRootLogin no
+    PasswordAuthentication no
+    PubkeyAuthentication yes
+
+UFW:
+    enabled
+
+Defaults:
+    incoming deny
+    outgoing allow
+    routed disabled/deny
+
+Intended inbound rules:
+    Anywhere on wg0       ALLOW IN
+    Anywhere (v6) on wg0  ALLOW IN
+
+There should be no public TCP/22 allow rule.
+
+Commissioning verification:
+    SSH to 10.99.0.14 succeeded.
+    SSH to public IPv4 173.249.221.118 timed out.
+    SSH to public IPv6 2607:9000:1000:81ab::a timed out.
+
+Direct workstation SSH alias:
+    frontdesk
+
+Jump box:
+    hostname: jumpbox
+    OS: FreeBSD 15.1
+    location: VM on the workstation
+    WG IPv4: 10.99.0.11
+    WG IPv6: fd42:42:42::11
+
+Jump-box host alias:
+    frontdesk
+
+Jump-box key:
+    ~/.ssh/id_ed25519_jump
+    Its public key is authorized on FrontDesk.
+
+Workstation ProxyJump alias:
+    frontdesk-jump
+
+Example:
+    Host frontdesk-jump
+        HostName 10.99.0.14
+        User joyfulreaper
+        IdentityFile ~/.ssh/FrontDesk
+        ProxyJump jumpbox
+
+The FreeBSD jump-box sshd uses PermitOpen as a destination whitelist.
+FrontDesk requires:
+    10.99.0.14:22
+
+If ProxyJump reports:
+    channel 0: open failed: administratively prohibited
+
+check the jump-box PermitOpen list.
+
+Commissioning verification:
+    direct WG SSH works;
+    jumpbox -> FrontDesk works;
+    workstation ProxyJump -> FrontDesk works.
+
+===============================================================================
+6. DISKS / FILESYSTEMS
+===============================================================================
+
+OS disk:
+    /dev/vda
+    40 GB
+
+Partitions:
+    /dev/vda1  ~1 MB reserved
+    /dev/vda2  ~122 MB vfat /boot/efi
+    /dev/vda3  ~39.9 GB ext4 /
+
+Root usage shortly after commissioning:
+    approximately 2.6 GB used
+    approximately 36 GB available
+    approximately 7% used
+
+Storage disk:
+    /dev/vdb
+    approximately 1 TiB
+
+Partition:
+    /dev/vdb1
+    ext4
+
+Filesystem UUID:
+    a3463cff-34e7-4d89-8d86-9ae6ae455bff
+
+Filesystem label:
+    frontdesk-storag
+
+Note:
+    ext4 labels are limited to 16 characters; intended label
+    "frontdesk-storage" was truncated.
+
+Mount:
+    /srv/storage
+
+fstab entry:
+    UUID=a3463cff-34e7-4d89-8d86-9ae6ae455bff /srv/storage ext4 defaults 0 2
+
+Policy:
+    no nofail option. If storage disappears, fail loudly instead of letting jobs
+    silently write into the root filesystem.
+
+Observed filesystem size:
+    approximately 1007 GiB
+    approximately 997 GiB available
+
+Commissioning reboot:
+    /srv/storage mounted successfully.
+
+===============================================================================
+7. STORAGE LAYOUT
+===============================================================================
+
+/srv/storage/
+    archives/
+        owner: joyfulreaper
+
+    downloads/
+        owner: joyfulreaper
+
+    backups/
+        owner: root
+        restrictive permissions
+
+    staging/
+        owner: joyfulreaper
+
+    secure/
+        owner: root
+        restrictive permissions
+        RESERVED FOR FUTURE USE
+
+    lost+found/
+
+IMPORTANT:
+    /srv/storage/secure is NOT currently encrypted.
+    Encryption was deliberately deferred.
+
+===============================================================================
+8. PERFORMANCE BASELINE
+===============================================================================
+
+Storage baseline, 2026-09-30:
+
+Sequential write:
+    approximately 458 MB/s
+
+Sequential read:
+    approximately 351 MB/s
+
+These are simple day-one baselines on shared virtual RAID-backed storage, not
+provider guarantees.
+
+Network iperf3 against Clanker:
+
+FrontDesk -> Clanker:
+    approximately 833-840 Mbit/s
+    observed sender 835 Mbit/s / receiver 833 Mbit/s
+
+Clanker -> FrontDesk:
+    approximately 895 Mbit/s
+    0 retransmits in observed reverse test
+
+===============================================================================
+9. AUTOMATIC SECURITY UPDATES
+===============================================================================
+
+Package:
+    unattended-upgrades
+
+Periodic config:
+    /etc/apt/apt.conf.d/20auto-upgrades
+
+Policy:
+    update package lists daily;
+    automatically install Debian SECURITY updates;
+    normal Debian package upgrades remain manual;
+    automatic reboot disabled.
+
+Expected effective settings:
+    APT::Periodic::Update-Package-Lists "1";
+    APT::Periodic::Unattended-Upgrade "1";
+    Unattended-Upgrade::Automatic-Reboot "false";
+
+Ordinary Debian origin was intentionally removed from unattended installation.
+
+Timers:
+    apt-daily.timer
+    apt-daily-upgrade.timer
+
+Both were enabled and active after reboot.
+
+===============================================================================
+10. TIME
+===============================================================================
+
+Timezone:
+    America/New_York
+
+NTP:
+    active
+
+Commissioning verification:
+    System clock synchronized: yes
+    RTC kept in UTC
+
+===============================================================================
+11. .NET RUNTIME
+===============================================================================
+
+Microsoft Debian 13 package repository installed.
+
+Production package:
+    aspnetcore-runtime-10.0
+
+Observed runtimes:
+    Microsoft.AspNetCore.App 10.0.12
+    Microsoft.NETCore.App 10.0.12
+
+The .NET SDK is intentionally not required just to run the Agent.
+
+===============================================================================
+12. MISSION CONTROL AGENT
+===============================================================================
+
+Status:
+    installed
+    enabled
+    running after reboot
+    visible in Mission Control as node "frontdesk"
+
+Service:
+    missioncontrol-agent.service
+
+Executable:
+    /opt/missioncontrol-agent/MissionControl.Agent
+
+Application directory:
+    /opt/missioncontrol-agent
+    root:root
+
+Service account:
+    missioncontrol-agent
+
+Environment file:
+    /etc/missioncontrol-agent.env
+    root-owned, mode 0600
+
+State:
+    /var/lib/missioncontrol-agent
+
+Identity:
+    NodeId: frontdesk
+    NodeName: FrontDesk
+
+Agent API:
+    http://10.99.0.14:5194/
+
+Binding:
+    WireGuard only
+
+Docker collection:
+    disabled
+
+Protocol probes:
+    none initially
+
+Dashboard fleet configuration lives on Clanker in:
+    /opt/stacks/joyful-stack/compose.yml
+
+Fleet entry:
+    Agents__Nodes__3__NodeId: frontdesk
+    Agents__Nodes__3__DisplayName: FrontDesk
+    Agents__Nodes__3__BaseUrl: http://10.99.0.14:5194/
+
+Dashboard container:
+    joyful-stack-dashboard-1
+
+Commissioning verification:
+    Dashboard healthy;
+    Clanker successfully queried /api/snapshot;
+    Dashboard showed FrontDesk CPU/RAM/load data.
+
+Durable Mission Control event publication:
+    currently disabled on FrontDesk.
+
+Known wart:
+    MissionControl__Enabled=false currently appears as a failed/rejected
+    publication attempt. Live monitoring is healthy despite "LAST ATTEMPT FAILED."
+    A Mission Control todo exists to fix the disabled-vs-failed distinction.
+
+===============================================================================
+13. CURRENT EXPOSURE MODEL
+===============================================================================
+
+Mission Control Agent:
+    TCP 10.99.0.14:5194 only
+
+SSH:
+    sshd may listen on 0.0.0.0:22 and [::]:22;
+    UFW blocks public access;
+    management traffic is permitted through wg0.
+
+WireGuard:
+    local UDP listener uses an ephemeral port;
+    unsolicited public inbound traffic is blocked by UFW.
+
+Do not infer public exposure from ss(8) alone; firewall policy is part of the design.
+
+===============================================================================
+14. BACKUPS
+===============================================================================
+
+Local backup/storage target:
+    /srv/storage/backups
+
+Important limitation:
+    FrontDesk's 1 TB storage is in the same VPS/provider account as FrontDesk.
+    Data existing only there is NOT independent disaster recovery.
+
+Tracked work includes:
+- audit the existing fleet backup scripts/jobs;
+- audit all VM backup coverage;
+- ensure every VM that should be protected backs up to FrontDesk's 1 TB
+  /srv/storage volume;
+- document VM source host, backup method/schedule, destination, retention and
+  exclusions;
+- avoid circular-only backup paths;
+- perform at least one restore/verification test;
+- establish an independent copy for important FrontDesk data.
+
+Until that audit is finished, do not assume every VM is protected.
+
+===============================================================================
+15. REBOOT ACCEPTANCE TEST
+===============================================================================
+
+Commissioning reboot:
+    2026-09-30 approximately 22:21 EDT
+
+Passed after reboot:
+    root filesystem mounted normally;
+    /srv/storage mounted normally;
+    0 failed systemd units;
+    wg-quick@wg0 enabled and active;
+    WireGuard handshake restored;
+    direct SSH over management WG works;
+    ProxyJump path works;
+    missioncontrol-agent enabled and active;
+    Mission Control API reachable from Clanker;
+    apt-daily.timer active;
+    apt-daily-upgrade.timer active;
+    UFW active;
+    NTP synchronized.
+
+===============================================================================
+16. RECOVERY ORDER
+===============================================================================
+
+If FrontDesk is unreachable:
+
+1. Test private management:
+       ping 10.99.0.14
+       ssh frontdesk
+
+2. Test through the FreeBSD jump box / ProxyJump.
+
+3. Check Clanker's wg0 peer state for FrontDesk.
+
+4. Use GreenCloud/VirtFusion provider console/VNC if WireGuard is unavailable.
+
+5. On the provider console inspect:
+       ip -br addr
+       ip route
+       ip -6 route
+       systemctl status wg-quick@wg0
+       wg show wg0
+       ufw status verbose
+       systemctl status ssh
+       systemctl --failed
+
+6. Do not leave public SSH enabled merely for convenience after recovery.
+
+===============================================================================
+17. IMPORTANT PATHS
+===============================================================================
+
+Hostname:
+    /etc/hostname
+    /etc/hosts
+
+SSH:
+    /etc/ssh/sshd_config
+    /etc/ssh/sshd_config.d/99-frontdesk.conf
+    /home/joyfulreaper/.ssh/authorized_keys
+
+WireGuard:
+    /etc/wireguard/wg0.conf
+    /etc/wireguard/frontdesk.key
+    /etc/wireguard/frontdesk.pub
+
+Filesystems:
+    /etc/fstab
+
+Unattended upgrades:
+    /etc/apt/apt.conf.d/20auto-upgrades
+    /etc/apt/apt.conf.d/50unattended-upgrades
+
+Mission Control Agent:
+    /opt/missioncontrol-agent/
+    /etc/missioncontrol-agent.env
+    /etc/systemd/system/missioncontrol-agent.service
+    /var/lib/missioncontrol-agent/
+
+Storage:
+    /srv/storage/
+
+===============================================================================
+18. SECURITY / SECRET NOTES
+===============================================================================
+
+Never commit:
+    SSH private keys
+    WireGuard private keys
+    Mission Control API keys
+    populated .env files
+    backup repository passwords
+    provider credentials
+
+Commissioning lesson:
+    recursive grep across deployment directories can print secrets from .env
+    files. Prefer exact paths, redacted output, variable names only, and
+    docker compose config -q.
+
+A Mission Control credential accidentally exposed during commissioning was
+rotated immediately.
+
+===============================================================================
+19. DEFERRED WORK
+===============================================================================
+
+Not commissioning blockers:
+- Mission Control disabled-publication status wart;
+- independent backup coverage and restore testing;
+- VM backup audit into /srv/storage;
+- decision on encryption for selected personal data;
+- possible WSIWOT migration;
+- possible future clearnet web/app workloads;
+- Docker, if a future workload actually needs it.
+
+Explicit current non-goals:
+- DN42 edge/router duties;
+- Yggdrasil experimentation;
+- tcpnoise bait/listener duties;
+- nested client VM hosting merely because KVM is available.
+
+FrontDesk is intended to stay boring.

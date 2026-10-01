@@ -340,6 +340,8 @@ FILESYSTEM_PATHS=(
     /opt/dockge
     /opt/smolsearch
     /opt/dn42landing
+    /opt/ygglanding
+    /opt/vpn-landing
 
     /opt/joyful-stack
 )

@@ -343,8 +343,12 @@ FILESYSTEM_PATHS=(
     /opt/ygglanding
     /opt/vpn-landing
     /opt/missioncontrol-agent
+    /opt/kgivler_com
 
     /opt/joyful-stack
+
+    /usr/local/bin/devsite
+    /usr/local/sbin/dn42-peering-admin
 )
 
 CURRENT_STAGE="staging application data"

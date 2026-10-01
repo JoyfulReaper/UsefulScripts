@@ -489,6 +489,7 @@ Verify:
 sudo systemctl daemon-reload
 sudo systemctl enable --now missioncontrol-agent
 sudo systemctl status missioncontrol-agent --no-pager
+sudo systemctl status beszel-agent --no-pager 2>/dev/null || true
 sudo journalctl -u missioncontrol-agent -n 50 --no-pager
 ```
 
@@ -516,7 +517,54 @@ Do **not** casually paste unrestricted `docker compose config` output; interpola
 
 Known current wart: `MissionControl__Enabled=false` can be displayed as a failed publication attempt even when live Agent monitoring is healthy.
 
-## 13. Backup enrollment
+## 13. Beszel Agent (when deeper host telemetry is useful)
+
+Mission Control provides the custom fleet/status view, but Beszel is useful for deeper host resource, filesystem, network, and systemd telemetry.
+
+Prefer the native Beszel Agent on a small production VPS rather than installing Docker solely for monitoring. Add the system in the existing Beszel Hub and use the Hub-generated Linux binary install command. The generated command contains host-specific authentication material; do not paste it into chat, documentation, shell transcripts, or Git.
+
+After installation, verify:
+
+```bash
+sudo systemctl status beszel-agent --no-pager
+sudo journalctl -u beszel-agent -n 50 --no-pager
+```
+
+For a host using the Beszel WebSocket connection, prefer explicitly disabling the agent's fallback SSH listener and adding important non-root filesystems through a systemd override:
+
+```bash
+sudo systemctl edit beszel-agent
+```
+
+Example:
+
+```ini
+[Service]
+Environment="EXTRA_FILESYSTEMS=/srv/storage"
+Environment="DISABLE_SSH=true"
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart beszel-agent
+sudo journalctl -u beszel-agent -n 50 --no-pager
+ss -tulpn | grep -E '45876|5194|:22' || true
+```
+
+Expected for WebSocket-only operation:
+
+- the journal reports `WebSocket connected`;
+- important extra filesystems such as `/srv/storage` are detected;
+- nothing remains listening on TCP/45876;
+- public firewall rules are not added merely for Beszel.
+
+The native installer may enable automatic daily agent updates. Record whether that option was enabled on the host.
+
+Never commit the Beszel KEY/TOKEN. When inspecting the unit, redact secret-bearing environment lines before sharing output.
+
+## 14. Backup enrollment
 
 Document:
 
@@ -535,7 +583,7 @@ Avoid circular-only backup designs with no independent copy of critical data.
 
 Current FrontDesk policy includes auditing VM coverage so every VM that should be protected lands on its 1 TB `/srv/storage`, while important FrontDesk data also receives an independent copy elsewhere.
 
-## 14. Time synchronization
+## 15. Time synchronization
 
 ```bash
 timedatectl status
@@ -550,7 +598,7 @@ NTP service: active
 
 Correct time matters for TLS, logs, monitoring, backups, and authentication.
 
-## 15. Reboot acceptance test
+## 16. Reboot acceptance test
 
 Before reboot:
 
@@ -589,10 +637,11 @@ Also verify externally:
 - direct WG SSH;
 - jump-box / ProxyJump path;
 - Mission Control Agent API;
+- Beszel reports the host and important filesystems when installed;
 - intentional public services;
 - public SSH is still blocked if that is the policy.
 
-## 16. Write a host-specific runbook
+## 17. Write a host-specific runbook
 
 Record:
 
@@ -615,7 +664,7 @@ Record:
 
 Never include secrets.
 
-## 17. Secret-handling lessons
+## 18. Secret-handling lessons
 
 Read-only commands can still leak credentials.
 
@@ -632,7 +681,7 @@ Prefer exact paths, redacted values, variable **names only**, `docker compose co
 
 If a credential is accidentally displayed outside its intended secret store, rotate it.
 
-## 18. Done criteria
+## 19. Done criteria
 
 - [ ] normal sudo administrator works
 - [ ] root SSH disabled
@@ -646,6 +695,7 @@ If a credential is accidentally displayed outside its intended secret store, rot
 - [ ] NTP synchronized
 - [ ] required data disks survive reboot
 - [ ] Mission Control Agent works when applicable
+- [ ] Beszel Agent works and extra filesystems are visible when applicable
 - [ ] backup plan/enrollment is documented
 - [ ] zero unexpected failed systemd units
 - [ ] listener list reviewed after reboot

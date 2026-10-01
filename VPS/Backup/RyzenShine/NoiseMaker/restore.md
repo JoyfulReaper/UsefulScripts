@@ -141,6 +141,23 @@ Use the same safety pattern as the tested Jumpbox restore:
 - inspect checkpoints;
 - boot only through VMConnect while isolated.
 
+
+## Verified quarterly restic run
+
+The scheduled task was started manually through Windows Task Scheduler on 2026-10-01 and completed successfully:
+
+```text
+Task: NoiseMaker Quarterly Backup
+LastTaskResult: 0
+Snapshot: 16464437
+Tags: hyperv,NoiseMaker
+Path: S:\HyperV-Backup-Staging\NoiseMaker
+Snapshot size: 4.158 GiB
+```
+
+This verifies that the password-backed scheduled-task context can access the stored DPAPI credentials and complete the NoiseMaker restic backup path unattended.
+
+
 ## Verification status
 
 As of 2026-10-01:
@@ -156,8 +173,10 @@ Full isolated boot restore:           NOT TESTED
 Current NoiseMaker VM registered:     VERIFIED
 Current NoiseMaker VM running:        VERIFIED
 Current VHDX has no parent:            VERIFIED
-Quarterly restic task installed:      NOT YET
-Quarterly restic scheduled run:       NOT TESTED
+Quarterly restic task installed:      VERIFIED
+Quarterly restic scheduled run:       VERIFIED
+First restic snapshot:                16464437
+Restic snapshot size:                 4.158 GiB
 ```
 
 The legacy backup remains useful historical recovery coverage. Keep it distinct from future restic snapshots; the current running VM uses a standalone merged base VHDX, while the legacy archive preserves the older checkpoint chain.

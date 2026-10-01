@@ -1584,25 +1584,38 @@ The backup:
     - writes required snapshots to ScopeCreep and FrontDesk
     - sends success/failure notifications through ntfy
     - cleans staging data on exit
+    - does not run full repository checks/prune inline; repository maintenance is
+      handled by separate maintenance services/timers
 
 The systemd service sets:
     HOME=/root
 
 This removes the previous restic cache warning caused by an undefined HOME.
 
-Validated 2026-10-01 backup run:
+Validated 2026-10-01 backup runs:
 
-ScopeCreep:
-    snapshot 8edc0c6a
+Initial FrontDesk path validation:
+    ScopeCreep snapshot 8edc0c6a
+    FrontDesk snapshot dd0dc23d
     6637 files
     ~385.865 MiB logical size
 
-FrontDesk:
-    repository ID prefix 23c4921c
-    snapshot dd0dc23d
-    6637 files
-    ~385.865 MiB logical size
-    ~117.718 MiB stored on first upload
+Final post-audit run at approximately 17:42 EDT:
+    ScopeCreep snapshot:
+        32650c83
+    FrontDesk snapshot:
+        07e3bba8
+    files:
+        7417
+    logical snapshot size:
+        ~565.599 MiB
+    FrontDesk incremental repository addition:
+        ~178.571 MiB logical
+        ~100.716 MiB stored
+
+The final run completed successfully in ~35 seconds and included the newly
+audited deployment/admin paths, including ygglanding, vpn-landing,
+missioncontrol-agent, kgivler_com/devsite, dn42-peering-admin, and Dozzle state.
 
 Representative FrontDesk restore test:
     restored /manifest/host.txt
@@ -1610,6 +1623,9 @@ Representative FrontDesk restore test:
     restored SQLite database returned:
         PRAGMA quick_check;
         ok
+
+FrontDesk repository ID prefix:
+    23c4921c
 
 FrontDesk repository maintenance:
     script:

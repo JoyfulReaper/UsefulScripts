@@ -484,7 +484,7 @@ DN42 config:
 DNS flow:
     LAN / WireGuard clients
         -> Pi-hole :53
-        -> Unbound 127.0.0.1:5335
+        -> Clanker Unbound 10.99.0.1:53
         -> public recursive DNS and DN42 forward/reverse forwarding
 
 DN42 forward zone:

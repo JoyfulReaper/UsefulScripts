@@ -35,8 +35,7 @@ Require-EnvVar "RESTIC_REST_USERNAME"
 Require-EnvVar "RESTIC_REST_PASSWORD"
 Require-EnvVar "RESTIC_PASSWORD"
 
-$stamp = Get-Date -Format "yyyy-MM-dd-HHmmss"
-$exportDir = Join-Path $StagingRoot "$VmName-$stamp"
+$exportDir = Join-Path $StagingRoot $VmName
 
 $startedAt = Get-Date
 $snapshotCreated = $false
@@ -58,8 +57,14 @@ try {
         throw "VM has checkpoints. Refusing backup until checkpoints are reviewed/merged."
     }
 
-    Write-Step "Creating staging directory"
-    New-Item -ItemType Directory -Force $exportDir | Out-Null
+	Write-Step "Checking staging directory"
+
+	if (Test-Path $exportDir) {
+		throw "Staging directory already exists: $exportDir. A previous backup may have failed; inspect it before continuing."
+	}
+
+	Write-Step "Creating staging directory"
+	New-Item -ItemType Directory -Path $exportDir | Out-Null
 
     Write-Step "Exporting VM"
     Export-VM -Name $VmName -Path $exportDir
@@ -70,10 +75,9 @@ try {
     Write-Host "Export size: $exportGiB GiB"
 
     Write-Step "Running restic backup"
-    restic -r $Repository backup $exportDir `
+	restic -r $Repository backup $exportDir `
 		--tag hyperv `
 		--tag $VmName `
-		--parent latest `
 		--limit-upload $LimitUploadKiB
 
     if ($LASTEXITCODE -ne 0) {

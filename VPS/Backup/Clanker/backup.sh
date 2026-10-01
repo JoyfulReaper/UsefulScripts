@@ -342,6 +342,7 @@ FILESYSTEM_PATHS=(
     /opt/dn42landing
     /opt/ygglanding
     /opt/vpn-landing
+    /opt/missioncontrol-agent
 
     /opt/joyful-stack
 )

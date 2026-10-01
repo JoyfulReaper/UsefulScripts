@@ -102,7 +102,46 @@ BGP sessions re-established automatically after the reboot:
 
 Some peer sessions took several minutes to converge after boot; this was observed but did not require manual intervention.
 
-## Remaining checks
+## Final acceptance reboot
 
-- `joyful-stack-archive-1` started after the boot-order fix but remained unhealthy; diagnose separately.
-- Recursive DNS requests sent to `10.99.0.1` from FrontDesk were refused. This is likely an Unbound access-control policy issue or intentional restriction; inspect access-control before changing it.
+A second deliberate reboot was performed after repairing Archive's Docker network attachment.
+
+Verified after the second reboot:
+
+- all critical systemd services were active;
+- no systemd units were failed;
+- public and DN42 DNS resolution worked immediately through local Unbound;
+- Docker again started only after `wg-quick@wg0` completed;
+- no `ordering cycle`, `cannot assign requested address`, or `failed to allocate port` errors were observed;
+- `joyful-stack-archive-1` attached to `joyful-stack_backend` automatically;
+- Archive returned HTTP 200 / `Healthy` without manual intervention;
+- all Docker containers returned to their expected running state;
+- all BGP sessions eventually returned to Established without manual intervention.
+
+Observed BGP convergence after the second reboot:
+
+- Baragoon: ~8 seconds
+- RoutedBits: ~2m22s
+- HEADSCARF175: ~3m43s
+- ScopeCreep IPv4: ~3m51s
+- hbg1 core: ~4m05s
+- ScopeCreep IPv6: ~4m08s
+
+The slower sessions are normal convergence behavior observed across two controlled reboot tests.
+
+## Archive incident detail
+
+After the first fixed reboot, Archive was running but unhealthy because the existing container had no Docker network attached. It therefore could not resolve the Compose service name `nats` and never opened its HTTP listener.
+
+Restarting the same container did not repair the missing network endpoint. Recreating only Archive did:
+
+```bash
+cd /opt/stacks/joyful-stack
+docker compose up -d --no-deps --force-recreate archive
+```
+
+After recreation, Archive joined `joyful-stack_backend`, resolved `nats`, and became healthy. The second reboot confirmed that this broken-network state did not recur with the corrected Docker/WireGuard startup ordering.
+
+## DNS access-control note
+
+Recursive DNS on `10.99.0.1` is intentionally restricted. Current ACLs allow loopback and Molasses (`10.99.0.10` / `fd42:42:42::10`), so FrontDesk (`10.99.0.14`) correctly receives REFUSED.

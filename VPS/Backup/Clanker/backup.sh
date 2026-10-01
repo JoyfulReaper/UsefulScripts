@@ -359,6 +359,8 @@ SQLITE_DATABASES=(
 
     /var/lib/missioncontrol-agent/mission-control-agent.db
 
+    /var/lib/dn42landing/peering.db
+
     /var/lib/randomgithub/data/randomgithub.db
 
     /var/lib/randomsteam/data/kgivler_com.db

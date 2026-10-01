@@ -1,206 +1,187 @@
 # Jumpbox Hyper-V Restore Guide
 
-This document describes the tested restore process for the **Jumpbox** FreeBSD VM hosted on **RyzenShine**.
+This document describes the current tested restore process for the **Jumpbox** FreeBSD VM hosted on **RyzenShine** and backed up to **FrontDesk** with restic.
 
-The procedure below was tested successfully on **2026-10-01**:
+The restic restore path was tested successfully on **2026-10-01** using snapshot:
 
-- Jumpbox was exported live with Hyper-V while production remained running.
-- The export included the VM configuration, virtual disks, and both existing checkpoints.
-- The export was archived and copied to FrontDesk.
-- SHA-256 matched after transfer.
-- The FrontDesk copy was downloaded back to RyzenShine.
-- The VM was imported with a new VM ID into an isolated restore-test directory.
-- The restored VM's network adapter was removed before boot.
-- The restored FreeBSD VM booted successfully.
-- Expected SSH, WireGuard, and jump-host configuration was present.
-- The test VM was shut down and removed.
-- The production Jumpbox checkpoints were then removed and Hyper-V merged the chain back into the base `Jumpbox.vhdx`.
+```text
+d7b4c991
+```
+
+The test proved the complete recovery chain:
+
+- Jumpbox was exported live from Hyper-V while production remained running.
+- Restic stored the export in the RyzenShine repository on FrontDesk.
+- The snapshot was restored back to RyzenShine.
+- The restored Hyper-V configuration and VHDX were located inside an isolated restore tree.
+- The VM was imported with `-Copy -GenerateNewId` into a separate restore-test location.
+- The imported VHDX pointed only at the isolated restore-test tree.
+- Saved runtime state from the live export was discarded on the clone.
+- The clone's network adapter was removed before first boot.
+- The restored FreeBSD guest booted successfully.
+- Expected SSH, WireGuard, and jump-host `PermitOpen` state were present.
+- The restore-test VM was shut down and removed.
+- Both restore-test directory trees were deleted.
+- The production Jumpbox remained running and healthy throughout the test.
 
 ## Current production state
 
-Host:
-
 ```text
-RyzenShine
+Host: RyzenShine
+Hypervisor: Hyper-V
+VM: Jumpbox
+Guest observed during restore test: FreeBSD 15.1-RELEASE-p4
+Production storage root: S:\VMs\Jumpbox\Jumpbox
+Production disk: S:\VMs\Jumpbox\Jumpbox\Virtual Hard Disks\Jumpbox.vhdx
+Checkpoints: none
 ```
 
-Hypervisor:
+## Current backup layout
 
 ```text
-Hyper-V
+Repository: rest:http://10.99.0.14:8000/ryzenshine/
+Stable staging path: S:\HyperV-Backup-Staging\Jumpbox
+Tags: hyperv, Jumpbox
+Frequency: weekly
+Retention: keep last 6 snapshots
+Upload limit: 10240 KiB/s
+Destination: FrontDesk over WireGuard
+Prune: separate maintenance operation
+Notifications: ntfy success/failure
 ```
 
-Production VM:
+The generic backup engine is:
 
 ```text
-Jumpbox
+windows\hyperv\Backup-HyperVVmToRestic.ps1
 ```
 
-Guest:
+Jumpbox uses the wrapper:
 
 ```text
-FreeBSD 15.1
+VPS\Backup\RyzenShine\Jumpbox\backup.ps1
 ```
 
-Production VM storage root:
+## Credential model
+
+RyzenShine stores unattended backup credentials under:
 
 ```text
-S:\VMs\Jumpbox\Jumpbox
+C:\ProgramData\UsefulScripts\HyperVBackup\
 ```
 
-Current production disk after checkpoint cleanup:
+Expected files:
 
 ```text
-S:\VMs\Jumpbox\Jumpbox\Virtual Hard Disks\Jumpbox.vhdx
+restic-rest-username.txt
+restic-rest-password.dpapi
+restic-repository-password.dpapi
+ntfy-token.dpapi
 ```
 
-Observed disk file size after merge:
+The DPAPI blobs were created by `RYZENSHINE\me`. The scheduled task must run under that same Windows identity.
 
-```text
-approximately 2.85 GB
+The rest-server password is replaceable HTTP authentication. If it is lost, reset it on FrontDesk:
+
+```bash
+sudo htpasswd -B /etc/restic-rest-server/users.htpasswd ryzenshine
 ```
 
-Current checkpoint state after the tested cleanup:
-
-```text
-No checkpoints
-```
-
-## FrontDesk backup location
-
-Jumpbox backups are stored under:
-
-```text
-/srv/storage/backups/vms/hyper-v/Jumpbox/
-```
-
-The first tested backup was stored as:
-
-```text
-/srv/storage/backups/vms/hyper-v/Jumpbox/2026-10-01/Jumpbox-2026-10-01-002444.tar
-```
-
-Dedicated FrontDesk backup account:
-
-```text
-backup-ryzenshine
-```
-
-Dedicated RyzenShine SSH key:
-
-```text
-C:\Users\me\.ssh\frontdesk-backup-ryzenshine
-```
-
-Do not commit or copy the private key into this repository.
-
-The FrontDesk authorized key is restricted to the RyzenShine WireGuard source address.
+The restic repository encryption password is different and is required to decrypt the repository. Keep an independent copy outside RyzenShine.
 
 ---
 
 # Important safety rule
 
-Jumpbox is part of the private management/recovery path.
-
-A restored copy may contain the same:
-
-- hostname;
-- SSH host keys;
-- SSH client keys;
-- WireGuard private keys and addresses;
-- jump-host `PermitOpen` rules;
-- network configuration.
+Jumpbox is part of the private management/recovery path. A restored copy can contain the same hostname, SSH keys, WireGuard private keys/addresses, jump-host `PermitOpen` rules, and network configuration.
 
 For a restore test, **do not boot the restored copy with networking attached**.
 
-For a real disaster recovery, do not allow the replacement to join the network until the original Jumpbox is confirmed off or permanently unavailable.
+For real disaster recovery, do not attach production networking until the original Jumpbox is confirmed off or permanently unavailable.
 
 ---
 
 # Restore-test procedure
 
-The restore-test procedure intentionally imports a second copy alongside production and isolates it before boot.
-
 Run Hyper-V import/remove commands from an **elevated PowerShell** window.
 
-## 1. Choose a backup
-
-Example tested backup:
+## 1. Set the repository and snapshot
 
 ```powershell
-$Stamp = "2026-10-01-002444"
+$Repo = "rest:http://10.99.0.14:8000/ryzenshine/"
+$Snapshot = "d7b4c991"
 ```
 
-Create a restore workspace:
+For future tests, replace the historical snapshot ID with the snapshot you deliberately choose.
+
+## 2. Load the restic credentials
 
 ```powershell
-$RestoreRoot = "S:\VMBackups\RestoreTest\Jumpbox-$Stamp"
-$Archive = "$RestoreRoot\Jumpbox-$Stamp.tar"
+$env:RESTIC_REST_USERNAME = (
+    Get-Content "C:\ProgramData\UsefulScripts\HyperVBackup\restic-rest-username.txt" -Raw
+).Trim()
 
+function Get-DpapiPlainText {
+    param([string]$Path)
+
+    $secure = Get-Content -LiteralPath $Path -Raw | ConvertTo-SecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+
+    try {
+        [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
+
+$env:RESTIC_REST_PASSWORD = Get-DpapiPlainText "C:\ProgramData\UsefulScripts\HyperVBackup\restic-rest-password.dpapi"
+$env:RESTIC_PASSWORD = Get-DpapiPlainText "C:\ProgramData\UsefulScripts\HyperVBackup\restic-repository-password.dpapi"
+```
+
+Do not echo either password variable.
+
+If the original Windows profile is unavailable, use the independently stored repository encryption password. The rest-server password can be supplied separately or reset on FrontDesk.
+
+## 3. Confirm repository access and choose a snapshot
+
+```powershell
+restic -r $Repo cat config
+restic -r $Repo snapshots --tag "hyperv,Jumpbox"
+restic -r $Repo ls $Snapshot
+```
+
+Do not blindly assume `latest` is the snapshot you want during an incident.
+
+## 4. Restore to an isolated workspace
+
+```powershell
+$RestoreRoot = "S:\VMBackups\RestoreTest\Jumpbox-$Snapshot"
 New-Item -ItemType Directory -Path $RestoreRoot -Force | Out-Null
+restic -r $Repo restore $Snapshot --target $RestoreRoot
 ```
 
-## 2. Download the FrontDesk copy
+The tested `d7b4c991` snapshot restored approximately `3.131 GiB`.
+
+Locate the VM configuration and VHDX recursively:
 
 ```powershell
-scp `
-  -i "$env:USERPROFILE\.ssh\frontdesk-backup-ryzenshine" `
-  "backup-ryzenshine@10.99.0.14:/srv/storage/backups/vms/hyper-v/Jumpbox/2026-10-01/Jumpbox-$Stamp.tar" `
-  $Archive
-```
+$Vmcx = Get-ChildItem $RestoreRoot -Recurse -Filter *.vmcx -File |
+    Select-Object -First 1
 
-If the automated backup format later changes to `.tar.gz` or `.tar.zst`, use the corresponding archive filename and extraction command.
-
-## 3. Verify the downloaded archive
-
-```powershell
-Get-FileHash $Archive -Algorithm SHA256
-```
-
-Compare the result with the hash recorded when the backup was created or with a trusted hash stored alongside the backup.
-
-The tested 2026-10-01 archive hash was:
-
-```text
-120B4A42753DB8692EA7152F7D6F8C7804D1AF6EE7119916F7AC6A61B8763A35
-```
-
-Do not assume this hash applies to later backups.
-
-## 4. Extract the export
-
-For the tested plain tar archive:
-
-```powershell
-tar.exe -C $RestoreRoot -xf $Archive
-```
-
-The exported VM tree should contain directories similar to:
-
-```text
-Jumpbox\
-├── Snapshots\
-├── Virtual Hard Disks\
-└── Virtual Machines\
-```
-
-Locate the exported Hyper-V configuration:
-
-```powershell
-$Vmcx = Get-ChildItem `
-  "$RestoreRoot\Jumpbox\Virtual Machines" `
-  -Filter *.vmcx |
-  Select-Object -First 1
+$Vhdx = Get-ChildItem $RestoreRoot -Recurse -Filter *.vhdx -File |
+    Select-Object -First 1
 
 $Vmcx.FullName
+$Vhdx.FullName
 ```
 
-The result must point inside the extracted restore tree.
+For the tested snapshot, restic recreated the original source path below the restore target.
 
-## 5. Prepare an isolated import location
+## 5. Prepare an isolated Hyper-V import location
 
 ```powershell
-$ImportRoot = "S:\VMBackups\RestoreTest\Jumpbox-Imported-$Stamp"
+$ImportRoot = "S:\VMBackups\RestoreTest\Jumpbox-Imported-$Snapshot"
 
 $VmPath   = "$ImportRoot\VM"
 $VhdPath  = "$ImportRoot\VHD"
@@ -208,123 +189,77 @@ $SnapPath = "$ImportRoot\Snapshots"
 $PagePath = "$ImportRoot\Paging"
 
 New-Item -ItemType Directory -Force `
-  $VmPath, $VhdPath, $SnapPath, $PagePath |
-  Out-Null
+    $VmPath, $VhdPath, $SnapPath, $PagePath |
+    Out-Null
 ```
 
 ## 6. Import as a copy with a new VM ID
 
 ```powershell
 $Restored = Import-VM `
-  -Path $Vmcx.FullName `
-  -Copy `
-  -GenerateNewId `
-  -VirtualMachinePath $VmPath `
-  -VhdDestinationPath $VhdPath `
-  -SnapshotFilePath $SnapPath `
-  -SmartPagingFilePath $PagePath
-```
+    -Path $Vmcx.FullName `
+    -Copy `
+    -GenerateNewId `
+    -VirtualMachinePath $VmPath `
+    -VhdDestinationPath $VhdPath `
+    -SnapshotFilePath $SnapPath `
+    -SmartPagingFilePath $PagePath
 
-Rename the clone immediately:
-
-```powershell
 Rename-VM -VM $Restored -NewName "Jumpbox-RestoreTest"
-
 $Restored = Get-VM -Name "Jumpbox-RestoreTest"
 ```
 
-## 7. If the imported VM is in Saved state
+## 7. Discard saved runtime state if present
 
-A live Hyper-V export may preserve saved/runtime state.
-
-Check:
+The tested live export imported in `Saved` state.
 
 ```powershell
 Get-VM -Name "Jumpbox-RestoreTest" |
     Select-Object Name, State, Status
-```
 
-If the restore copy is `Saved`, discard only the test VM's saved RAM state:
-
-```powershell
 Remove-VMSavedState `
-  -VMName "Jumpbox-RestoreTest" `
-  -Confirm:$false
+    -VMName "Jumpbox-RestoreTest" `
+    -Confirm:$false
 ```
 
-Then verify it is `Off`:
+Verify the clone is now `Off`. This discards only saved RAM/runtime state, not the restored virtual disk.
 
-```powershell
-Get-VM -Name "Jumpbox-RestoreTest" |
-    Select-Object Name, State, Status
-```
-
-This does not discard the restored virtual-disk state.
-
-## 8. Verify the restored disks are isolated
+## 8. Verify disk isolation
 
 ```powershell
 Get-VMHardDiskDrive -VM $Restored |
     Select-Object VMName, Path
 ```
 
-The disk path must point under:
+The tested VHD landed at:
 
 ```text
-S:\VMBackups\RestoreTest\Jumpbox-Imported-...
+S:\VMBackups\RestoreTest\Jumpbox-Imported-d7b4c991\VHD\Jumpbox.vhdx
 ```
 
-It must **not** point at the production directory:
-
-```text
-S:\VMs\Jumpbox\...
-```
+The restored disk must **not** point under `S:\VMs\Jumpbox\...`.
 
 ## 9. Remove all networking before boot
 
-Inspect the imported NICs:
-
 ```powershell
-Get-VMNetworkAdapter -VM $Restored |
+Get-VMNetworkAdapter -VMName "Jumpbox-RestoreTest" |
     Select-Object VMName, Name, SwitchName, MacAddress
-```
 
-Remove every NIC from the restore-test clone:
-
-```powershell
-Get-VMNetworkAdapter -VM $Restored |
+Get-VMNetworkAdapter -VMName "Jumpbox-RestoreTest" |
     Remove-VMNetworkAdapter
+
+Get-VMNetworkAdapter -VMName "Jumpbox-RestoreTest"
 ```
 
-Verify:
+The final command must return no adapters. The tested export initially imported attached to `FreeBSD-NAT`.
+
+## 10. Verify no unexpected checkpoints
 
 ```powershell
-Get-VMNetworkAdapter -VM $Restored
+Get-VMSnapshot -VMName "Jumpbox-RestoreTest" -ErrorAction SilentlyContinue
 ```
 
-Expected result:
-
-```text
-(no output)
-```
-
-**Do not boot the restore-test VM if any network adapter remains attached.**
-
-## 10. Inspect checkpoints if the selected backup contains them
-
-```powershell
-Get-VMSnapshot -VM $Restored |
-    Select-Object VMName, Name, CreationTime
-```
-
-The first tested backup contained:
-
-```text
-Setup Jumpbox
-Move to FreeBSD-NAT Adapter
-```
-
-Later scheduled backups may contain no checkpoints because the production chain was subsequently merged.
+The tested restic restore contained no checkpoints.
 
 ## 11. Boot the isolated clone
 
@@ -333,45 +268,34 @@ Start-VM -Name "Jumpbox-RestoreTest"
 
 Get-VM -Name "Jumpbox-RestoreTest" |
     Select-Object Name, State, Status
-```
 
-Open the Hyper-V console:
-
-```powershell
 vmconnect.exe localhost "Jumpbox-RestoreTest"
 ```
 
 ## 12. Verify the guest
-
-Inside FreeBSD, check basic system health:
 
 ```sh
 hostname
 freebsd-version
 uname -a
 df -h
-ls
-```
-
-For Jumpbox specifically, verify the recovery/jump-host state:
-
-```sh
 ls -la ~/.ssh
 sudo ls -la /usr/local/etc/wireguard 2>/dev/null
 sudo grep -n 'PermitOpen' /etc/ssh/sshd_config
 ```
 
-The tested restore confirmed:
+The 2026-10-01 restic restore test confirmed:
 
-- FreeBSD booted normally;
-- the expected `~/.ssh` configuration and key material were present;
-- WireGuard configuration was present;
-- the SSH `PermitOpen` jump-host whitelist was present, including FrontDesk;
-- the root filesystem mounted normally.
+- hostname `jumpbox`;
+- FreeBSD `15.1-RELEASE-p4`;
+- the root filesystem mounted normally;
+- expected SSH key/configuration files were present;
+- `/usr/local/etc/wireguard/wg0.conf` was present;
+- the SSH `PermitOpen` whitelist was present with the expected private destinations.
 
-Do not enable networking during an isolated restore test.
+Do not enable networking during the isolated restore test.
 
-## 13. Shut down the restore-test guest
+## 13. Shut down and clean up
 
 Inside FreeBSD:
 
@@ -379,158 +303,92 @@ Inside FreeBSD:
 sudo shutdown -p now
 ```
 
-Then in PowerShell:
-
-```powershell
-Get-VM -Name "Jumpbox-RestoreTest" |
-    Select-Object Name, State
-```
-
-Wait for:
-
-```text
-Off
-```
-
-## 14. Remove the test VM
+After Hyper-V reports `Off`:
 
 ```powershell
 Remove-VM -Name "Jumpbox-RestoreTest" -Force
+Remove-Item $ImportRoot -Recurse -Force
+Remove-Item $RestoreRoot -Recurse -Force
 ```
 
-Remove the imported restore tree:
+Verify production and cleanup:
 
 ```powershell
-Remove-Item `
-  "S:\VMBackups\RestoreTest\Jumpbox-Imported-$Stamp" `
-  -Recurse -Force
+Get-VM -Name "Jumpbox" |
+    Select-Object Name, State, Status
+
+Get-VM -Name "Jumpbox-RestoreTest" -ErrorAction SilentlyContinue
+
+Test-Path $ImportRoot
+Test-Path $RestoreRoot
 ```
 
-Remove the downloaded/extracted restore tree:
-
-```powershell
-Remove-Item `
-  "S:\VMBackups\RestoreTest\Jumpbox-$Stamp" `
-  -Recurse -Force
-```
-
-Do not delete the canonical FrontDesk backup as part of restore-test cleanup.
+The tested cleanup ended with production Jumpbox running normally, no restore-test VM, and both restore-test paths returning `False`.
 
 ---
 
 # Full disaster recovery
 
-For an actual Jumpbox loss, the same export/import mechanism can be used, but the safety rules differ slightly because the replacement is intended to become production.
+For an actual Jumpbox loss:
 
-1. Confirm the original Jumpbox is stopped, destroyed, or otherwise incapable of rejoining the network.
-2. Choose a known-good FrontDesk backup.
-3. Download it to RyzenShine.
-4. Verify its SHA-256.
-5. Extract it.
-6. Import it with `Import-VM -Copy -GenerateNewId` into a clean production location.
-7. Review all virtual disk paths.
-8. Review network adapter/switch mappings before connecting the replacement to a switch.
-9. Boot the VM from the Hyper-V console first.
-10. Verify FreeBSD, SSH keys/config, WireGuard configuration, and `PermitOpen`.
-11. Recreate or attach the intended Hyper-V network adapter only after the guest state is confirmed.
-12. Verify the management WireGuard tunnel.
-13. Test Jumpbox SSH access from RyzenShine.
-14. Test a ProxyJump connection through Jumpbox to a known private host such as FrontDesk.
-15. Confirm the old Jumpbox cannot reappear with duplicate WireGuard or SSH identity.
+1. Confirm the original Jumpbox cannot rejoin the network.
+2. Establish trusted connectivity from the replacement Hyper-V host to FrontDesk.
+3. Install restic and Hyper-V.
+4. Obtain the rest-server username/password.
+5. Obtain the independently stored restic repository encryption password.
+6. Confirm repository access with `restic cat config`.
+7. List snapshots tagged `hyperv,Jumpbox`.
+8. Choose a known-good snapshot deliberately.
+9. Restore it to local storage.
+10. Locate the exported `.vmcx`.
+11. Import it with `Import-VM -Copy -GenerateNewId`.
+12. Verify every VHD path.
+13. Remove networking before first boot.
+14. Boot from the Hyper-V console and verify FreeBSD, SSH, WireGuard, and `PermitOpen`.
+15. Attach/recreate production networking only after the original VM is known to be gone.
+16. Verify WireGuard, direct SSH, and a ProxyJump connection through Jumpbox.
 
-If RyzenShine itself is being rebuilt, Hyper-V virtual-switch names may differ from the original host. Do not assume the exported switch mapping is valid on a replacement Windows host.
-
----
-
-# Checkpoint cleanup performed after the tested restore
-
-After the successful restore test, the production Jumpbox had two old checkpoints:
-
-```text
-Setup Jumpbox
-Move to FreeBSD-NAT Adapter
-```
-
-They were removed through Hyper-V:
-
-```powershell
-Get-VMSnapshot -VMName Jumpbox |
-    Remove-VMSnapshot
-```
-
-This preserved the current VM state and allowed Hyper-V to merge the differencing-disk chain.
-
-After the merge:
-
-```powershell
-Get-VMSnapshot -VMName Jumpbox
-```
-
-returned no checkpoints, and:
-
-```powershell
-Get-VMHardDiskDrive -VMName Jumpbox |
-    Select-Object Path
-```
-
-returned:
-
-```text
-S:\VMs\Jumpbox\Jumpbox\Virtual Hard Disks\Jumpbox.vhdx
-```
-
-The remaining production disk file was approximately:
-
-```text
-2.85 GB
-```
-
-Never manually delete Hyper-V `.avhdx` files to squash checkpoints. Remove checkpoints through Hyper-V and allow Hyper-V to perform the merge.
+If the replacement Windows host has different Hyper-V virtual-switch names, do not assume the exported switch mapping is valid.
 
 ---
 
-# Backup verification standard
+# Legacy archive backup
 
-A Jumpbox backup should not be considered fully proven merely because an archive exists.
+Before the restic migration, Jumpbox used a tar/SCP backup flow under:
 
-The desired verification chain is:
+```text
+/srv/storage/backups/vms/hyper-v/Jumpbox/
+```
 
-1. Hyper-V live export completes.
-2. Archive/export is created.
-3. SHA-256 is calculated locally.
-4. Backup is transferred to FrontDesk over WireGuard.
-5. FrontDesk SHA-256 matches.
-6. A representative backup is periodically downloaded back to RyzenShine.
-7. It imports successfully with a new VM ID.
-8. Networking is removed from the test clone.
-9. FreeBSD boots.
-10. Important Jumpbox SSH/WireGuard/recovery configuration is present.
-11. The test VM shuts down and cleans up normally.
+A 2026-10-01 archive from that flow was independently restored and boot-tested before the production checkpoint chain was cleaned up.
 
-The 2026-10-01 backup passed this complete restore test.
+That archive is historical/legacy coverage. Do not delete it solely because the current flow uses restic; retire it deliberately after enough restic history exists.
 
 ---
 
-# Intended scheduled-backup policy
+# Verification status
 
-Jumpbox does not need daily VM exports.
-
-Current intended policy:
+As of **2026-10-01**:
 
 ```text
-Frequency: weekly
-Destination: FrontDesk
-Retention: approximately 4-6 weekly copies
-Transfer path: WireGuard
-Backup type: live Hyper-V export
-Archive: compressed archive preferred for scheduled backups
-Restore test: periodic, and after significant changes to the backup process
+Restic snapshot creation:     VERIFIED
+Restic restore:               VERIFIED
+Hyper-V import as copy:       VERIFIED
+New VM ID / isolated VHD:     VERIFIED
+Saved-state discard:          VERIFIED
+Network isolation:            VERIFIED
+FreeBSD boot:                 VERIFIED
+SSH state:                    VERIFIED
+WireGuard config:             VERIFIED
+PermitOpen state:             VERIFIED
+Restore-test cleanup:         VERIFIED
+Production VM unaffected:     VERIFIED
 ```
 
-A fresh backup should also be considered after meaningful Jumpbox configuration changes, especially changes to:
+Full restic restore-test snapshot:
 
-- WireGuard;
-- SSH keys;
-- `PermitOpen`;
-- Hyper-V networking;
-- recovery/jump-host configuration.
+```text
+d7b4c991
+```
+
+Repeat a full restore test after major changes to the backup format, repository, credential/encryption model, Hyper-V storage design, or Jumpbox recovery configuration.

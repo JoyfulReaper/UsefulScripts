@@ -34,6 +34,43 @@ function Test-SecureStringEqual {
     }
 }
 
+function Get-SecretSecureString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EnvironmentName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Prompt,
+
+        [switch]$Confirm
+    )
+
+    $plainText = [Environment]::GetEnvironmentVariable($EnvironmentName, "Process")
+
+    if (-not [string]::IsNullOrWhiteSpace($plainText)) {
+        Write-Host "Using $EnvironmentName from the current PowerShell process."
+
+        try {
+            return ConvertTo-SecureString -String $plainText -AsPlainText -Force
+        }
+        finally {
+            $plainText = $null
+        }
+    }
+
+    $secret = Read-Host $Prompt -AsSecureString
+
+    if ($Confirm) {
+        $confirmation = Read-Host "confirm $Prompt" -AsSecureString
+
+        if (-not (Test-SecureStringEqual -First $secret -Second $confirmation)) {
+            throw "The two values for '$Prompt' did not match. Nothing was written."
+        }
+    }
+
+    return $secret
+}
+
 function Write-DpapiSecret {
     param(
         [Parameter(Mandatory = $true)]
@@ -57,6 +94,13 @@ if ($env:OS -ne "Windows_NT") {
 }
 
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+if (
+    -not $PSBoundParameters.ContainsKey("RestUsername") -and
+    -not [string]::IsNullOrWhiteSpace($env:RESTIC_REST_USERNAME)
+) {
+    $RestUsername = $env:RESTIC_REST_USERNAME
+}
 
 $secretFiles = @(
     (Join-Path $SecretRoot "restic-rest-username.txt")
@@ -84,9 +128,24 @@ Write-Host "Windows identity: $currentIdentity"
 Write-Host "Secret root:      $SecretRoot"
 Write-Host ""
 
+$restServerPassword = Get-SecretSecureString `
+    -EnvironmentName "RESTIC_REST_PASSWORD" `
+    -Prompt "rest-server password for $RestUsername"
+
+$repositoryPassword = Get-SecretSecureString `
+    -EnvironmentName "RESTIC_PASSWORD" `
+    -Prompt "restic repository encryption password" `
+    -Confirm
+
+$ntfyToken = Get-SecretSecureString `
+    -EnvironmentName "NTFY_TOKEN" `
+    -Prompt "ntfy token for RyzenShine backup notifications"
+
 New-Item -ItemType Directory -Path $SecretRoot -Force | Out-Null
 
-& icacls.exe $SecretRoot /grant:r "${currentIdentity}:(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+$userAcl = $currentIdentity + ":(OI)(CI)F"
+
+& icacls.exe $SecretRoot /grant:r $userAcl "SYSTEM:(OI)(CI)F" | Out-Null
 
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to grant ACLs on $SecretRoot"
@@ -97,17 +156,6 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to disable inherited ACLs on $SecretRoot"
 }
-
-$restServerPassword = Read-Host "rest-server password for $RestUsername" -AsSecureString
-
-$repositoryPassword = Read-Host "restic repository encryption password" -AsSecureString
-$repositoryPasswordConfirm = Read-Host "confirm restic repository encryption password" -AsSecureString
-
-if (-not (Test-SecureStringEqual -First $repositoryPassword -Second $repositoryPasswordConfirm)) {
-    throw "Repository passwords did not match. Nothing was written."
-}
-
-$ntfyToken = Read-Host "ntfy token for RyzenShine backup notifications" -AsSecureString
 
 Set-Content `
     -LiteralPath (Join-Path $SecretRoot "restic-rest-username.txt") `
@@ -127,8 +175,8 @@ Write-DpapiSecret `
     -Secret $ntfyToken `
     -Path (Join-Path $SecretRoot "ntfy-token.dpapi")
 
-foreach ($path in $secretFiles | Where-Object { $_ -like "*.dpapi" }) {
-    $protectedValue = (Get-Content -LiteralPath $path -Raw).Trim()
+foreach ($secretPath in $secretFiles | Where-Object { $_ -like "*.dpapi" }) {
+    $protectedValue = (Get-Content -LiteralPath $secretPath -Raw).Trim()
     $null = ConvertTo-SecureString -String $protectedValue
 }
 

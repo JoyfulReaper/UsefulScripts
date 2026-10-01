@@ -477,7 +477,105 @@ Known wart:
     A Mission Control todo exists to fix the disabled-vs-failed distinction.
 
 ===============================================================================
-13. CURRENT EXPOSURE MODEL
+13. BESZEL AGENT
+===============================================================================
+
+Purpose:
+    deeper host/resource/storage/systemd telemetry than the lightweight custom
+    Mission Control Agent currently provides.
+
+Status:
+    installed
+    enabled
+    running
+    visible in the Beszel dashboard as FrontDesk
+
+Version installed during commissioning:
+    beszel-agent v0.20.0
+
+Install type:
+    native Linux binary / systemd service
+    Docker was deliberately NOT installed just to run Beszel.
+
+Service:
+    beszel-agent.service
+
+Executable:
+    /opt/beszel-agent/beszel-agent
+
+Service user:
+    beszel
+
+State directory:
+    /var/lib/beszel-agent
+
+Systemd unit:
+    /etc/systemd/system/beszel-agent.service
+
+Automatic daily agent updates:
+    enabled by the Beszel installer
+
+Hub:
+    https://beszel.kgivler.com
+
+Connection mode:
+    outbound WebSocket
+
+Important runtime configuration:
+    EXTRA_FILESYSTEMS=/srv/storage
+    DISABLE_SSH=true
+
+Secret-bearing settings:
+    KEY
+    TOKEN
+
+Do NOT record their values in this file or commit them to Git.
+
+Observed disks:
+    root filesystem:
+        vda3
+        mount /
+        root=true
+
+    bulk storage:
+        /dev/vdb1
+        mount /srv/storage
+        root=false
+
+Observed network interfaces:
+    eth0
+    wg0
+
+Verified runtime log:
+    WebSocket connected host=beszel.kgivler.com
+
+Verified listener behavior:
+    Beszel initially started an SSH listener on TCP/45876 while WebSocket
+    authentication was not yet working.
+
+    After the correct Beszel registration configuration was applied, the
+    WebSocket connected successfully and the SSH server stopped.
+
+    DISABLE_SSH=true is now explicitly configured so FrontDesk uses
+    WebSocket-only operation.
+
+Current expected listener check:
+    ss -tulpn | grep -E '45876|5194|:22'
+
+Expected:
+    10.99.0.14:5194   Mission Control Agent
+    0.0.0.0:22        sshd, filtered by UFW
+    [::]:22            sshd, filtered by UFW
+    NO :45876 listener
+
+Beszel dashboard verification:
+    FrontDesk is online.
+    CPU, memory, disk, load, network, uptime, services, and agent status are
+    visible.
+    /srv/storage is monitored as an additional filesystem.
+
+===============================================================================
+14. CURRENT EXPOSURE MODEL
 ===============================================================================
 
 Mission Control Agent:
@@ -495,7 +593,7 @@ WireGuard:
 Do not infer public exposure from ss(8) alone; firewall policy is part of the design.
 
 ===============================================================================
-14. BACKUPS
+15. BACKUPS
 ===============================================================================
 
 Local backup/storage target:
@@ -519,7 +617,7 @@ Tracked work includes:
 Until that audit is finished, do not assume every VM is protected.
 
 ===============================================================================
-15. REBOOT ACCEPTANCE TEST
+16. REBOOT ACCEPTANCE TEST
 ===============================================================================
 
 Commissioning reboot:
@@ -540,8 +638,14 @@ Passed after reboot:
     UFW active;
     NTP synchronized.
 
+Beszel was installed after the main commissioning reboot. On the next routine
+reboot, additionally verify:
+    systemctl status beszel-agent --no-pager
+    FrontDesk returns ONLINE in the Beszel UI
+    /srv/storage remains visible as an extra filesystem
+
 ===============================================================================
-16. RECOVERY ORDER
+17. RECOVERY ORDER
 ===============================================================================
 
 If FrontDesk is unreachable:
@@ -564,12 +668,14 @@ If FrontDesk is unreachable:
        wg show wg0
        ufw status verbose
        systemctl status ssh
+       systemctl status missioncontrol-agent
+       systemctl status beszel-agent
        systemctl --failed
 
 6. Do not leave public SSH enabled merely for convenience after recovery.
 
 ===============================================================================
-17. IMPORTANT PATHS
+18. IMPORTANT PATHS
 ===============================================================================
 
 Hostname:
@@ -599,17 +705,23 @@ Mission Control Agent:
     /etc/systemd/system/missioncontrol-agent.service
     /var/lib/missioncontrol-agent/
 
+Beszel Agent:
+    /opt/beszel-agent/
+    /etc/systemd/system/beszel-agent.service
+    /var/lib/beszel-agent/
+
 Storage:
     /srv/storage/
 
 ===============================================================================
-18. SECURITY / SECRET NOTES
+19. SECURITY / SECRET NOTES
 ===============================================================================
 
 Never commit:
     SSH private keys
     WireGuard private keys
     Mission Control API keys
+    Beszel KEY/TOKEN values
     populated .env files
     backup repository passwords
     provider credentials
@@ -623,7 +735,7 @@ A Mission Control credential accidentally exposed during commissioning was
 rotated immediately.
 
 ===============================================================================
-19. DEFERRED WORK
+20. DEFERRED WORK
 ===============================================================================
 
 Not commissioning blockers:

@@ -14,6 +14,10 @@ param(
 
     [string]$NtfyUrl = "http://10.99.0.1:5197/vps-backups",
 
+    [string]$RestUsername,
+
+    [string]$SecretRoot = (Join-Path $env:ProgramData "UsefulScripts\HyperVBackup"),
+
     [switch]$SkipRetention,
 
     [switch]$SkipNotifications
@@ -31,9 +35,105 @@ function Write-Step {
 function Require-EnvVar {
     param([string]$Name)
 
-    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name, "Process"))) {
         throw "Missing required environment variable: $Name"
     }
+}
+
+function Import-DpapiSecret {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Secret file not found: $Path"
+    }
+
+    $protectedValue = (Get-Content -LiteralPath $Path -Raw).Trim()
+
+    if ([string]::IsNullOrWhiteSpace($protectedValue)) {
+        throw "Secret file is empty: $Path"
+    }
+
+    try {
+        $secureValue = ConvertTo-SecureString -String $protectedValue
+    }
+    catch {
+        throw "Unable to decrypt secret file '$Path'. It must be created and read by the same Windows user."
+    }
+
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+
+    try {
+        [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    }
+    finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
+
+function Set-ProcessEnvFromDpapiSecret {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name, "Process"))) {
+        return
+    }
+
+    $plainText = Import-DpapiSecret -Path $Path
+
+    try {
+        [Environment]::SetEnvironmentVariable($Name, $plainText, "Process")
+    }
+    finally {
+        $plainText = $null
+    }
+}
+
+function Initialize-BackupCredentials {
+    if (-not $SkipNotifications -and [string]::IsNullOrWhiteSpace($env:NTFY_TOKEN)) {
+        $ntfyTokenPath = Join-Path $SecretRoot "ntfy-token.dpapi"
+
+        if (Test-Path -LiteralPath $ntfyTokenPath -PathType Leaf) {
+            try {
+                Set-ProcessEnvFromDpapiSecret -Name "NTFY_TOKEN" -Path $ntfyTokenPath
+            }
+            catch {
+                Write-Warning "Unable to load ntfy token from DPAPI storage: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:RESTIC_REST_USERNAME)) {
+        if (-not [string]::IsNullOrWhiteSpace($RestUsername)) {
+            $env:RESTIC_REST_USERNAME = $RestUsername
+        }
+        else {
+            $usernamePath = Join-Path $SecretRoot "restic-rest-username.txt"
+
+            if (Test-Path -LiteralPath $usernamePath -PathType Leaf) {
+                $env:RESTIC_REST_USERNAME = (Get-Content -LiteralPath $usernamePath -Raw).Trim()
+            }
+        }
+    }
+
+    Set-ProcessEnvFromDpapiSecret `
+        -Name "RESTIC_REST_PASSWORD" `
+        -Path (Join-Path $SecretRoot "restic-rest-password.dpapi")
+
+    Set-ProcessEnvFromDpapiSecret `
+        -Name "RESTIC_PASSWORD" `
+        -Path (Join-Path $SecretRoot "restic-repository-password.dpapi")
+
+    Require-EnvVar "RESTIC_REST_USERNAME"
+    Require-EnvVar "RESTIC_REST_PASSWORD"
+    Require-EnvVar "RESTIC_PASSWORD"
 }
 
 function Format-Duration {
@@ -111,11 +211,9 @@ Write-Host "Throttle:    $LimitUploadKiB KiB/s"
 Write-Host "Started:     $startedAt"
 
 try {
-    $currentStage = "credential validation"
+    $currentStage = "credential loading"
 
-    Require-EnvVar "RESTIC_REST_USERNAME"
-    Require-EnvVar "RESTIC_REST_PASSWORD"
-    Require-EnvVar "RESTIC_PASSWORD"
+    Initialize-BackupCredentials
 
     $currentStage = "VM preflight"
 
@@ -273,5 +371,5 @@ catch {
         -Tags "x,floppy_disk" `
         -Message $failureMessage
 
-    throw $failure
+    throw
 }

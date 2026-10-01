@@ -1090,8 +1090,8 @@ molasses-watch.timer:
 
 vps-backup.timer:
     daily Clanker backup
-    observed most recent run:
-        2026-09-25 03:33 EDT
+    manually validated full run:
+        2026-10-01 17:11 EDT
 
 scopecreep-backup-maintenance.timer:
     weekly maintenance for ScopeCreep repository hosted on Clanker
@@ -1099,8 +1099,15 @@ scopecreep-backup-maintenance.timer:
 molasses-backup-maintenance.timer:
     weekly maintenance for Molasses repository hosted on Clanker
 
-b2-backup-maintenance.timer:
-    weekly maintenance for Clanker's Backblaze B2 repository
+frontdesk-backup-maintenance.timer:
+    weekly maintenance for Clanker's FrontDesk repository
+    retention:
+        keep all snapshots within the most recent 90 days
+
+Backblaze B2:
+    removed from the required daily backup path while viability/cost/maintenance
+    behavior is under investigation
+    b2-backup-maintenance.timer disabled as of 2026-10-01
 
 certbot.timer:
     certificate renewal
@@ -1294,6 +1301,10 @@ Deployment/configuration trees:
     /opt/joyful-stack
     /opt/dockge
     /opt/smolsearch
+    /opt/dn42landing
+    /opt/ygglanding
+    /opt/vpn-landing
+    /opt/missioncontrol-agent
 
 ===============================================================================
 16. KNOWN DATABASES / STATE STORES
@@ -1371,10 +1382,19 @@ joyful-stack_dashboard-data
     Dashboard authentication/application state and Data Protection keys
 
 Dozzle state:
-    small local volume
+    dozzle_dozzle_data
+    tiny profile/configuration state
+    explicitly included in the Clanker backup
 
-Backup implementation currently snapshots selected meaningful volume state rather
-than blindly backing up all of /var/lib/docker.
+Archive anonymous volume:
+    an additional anonymous volume is mounted at /app/data because the Archive
+    image declares VOLUME ["/app/data"]; current production Archive data is on
+    joyful-stack_archive-data mounted at /data
+    the anonymous /app/data volume was effectively empty at the 2026-10-01 audit
+    and is not treated as recovery state
+
+Backup implementation snapshots selected meaningful volume state rather than
+blindly backing up all of /var/lib/docker.
 
 ===============================================================================
 18. TCPNOISE
@@ -1485,7 +1505,7 @@ material and must not be committed to public repositories.
 20. BACKUP ARCHITECTURE / POLICY
 ===============================================================================
 
-Clanker's backup architecture is implemented.
+Clanker's backup architecture is implemented and was re-audited on 2026-10-01.
 
 Primary backup script:
     /home/joyfulreaper/UsefulScripts/VPS/Backup/Clanker/backup.sh
@@ -1500,7 +1520,7 @@ systemd:
 Frequency:
     daily
 
-Destinations:
+Required destinations:
 
 1. Peer copy on ScopeCreep over WireGuard/rest-server
 
@@ -1511,72 +1531,104 @@ Destinations:
         clanker
         peer
 
-2. Independent Backblaze B2 object-storage copy
+2. Bulk-storage copy on FrontDesk over WireGuard/rest-server
 
     Repository:
-        s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-clanker
+        rest:http://10.99.0.14:8000/clanker/
+
+    REST user:
+        clanker
 
     Tags:
         clanker
-        offsite
-        b2
+        frontdesk
+
+    FrontDesk rest-server:
+        native restic-rest-server
+        listener 10.99.0.14:8000
+        --private-repos
+        repository root /srv/storage/backups/restic
+
+    FrontDesk firewall:
+        TCP/8000 on wg0 is explicitly allowed from Clanker 10.99.0.1
+        other management-WireGuard peers are denied unless separately allowed
+
+Backblaze B2:
+    previously used as an additional S3-compatible destination
+    currently considered broken / under investigation for this environment
+    intentionally removed from the required daily backup path on 2026-10-01
+    must not prevent ScopeCreep or FrontDesk backups from succeeding
+    separate B2 maintenance scheduling is disabled while this is investigated
 
 The backup:
     - requires root
     - prevents overlapping runs with flock
-    - verifies destination repository connectivity first
+    - verifies required destination repository connectivity first
+    - scopes REST credentials per repository invocation
     - builds a fresh staging tree
-    - stages most required host/application configuration
-    - excludes backup credentials themselves
-    - creates consistent SQLite snapshots
+    - stages recovery-relevant host/application configuration
+    - excludes /etc/vps-backup credential material from the ordinary /etc copy
+    - creates consistent SQLite snapshots and checks them with PRAGMA quick_check
     - snapshots selected Docker named-volume state
-    - archives NATS JetStream state
+    - archives NATS JetStream state while NATS is briefly stopped
     - generates a recovery manifest
-    - writes to ScopeCreep
-    - writes to Backblaze B2
+    - writes required snapshots to ScopeCreep and FrontDesk
     - sends success/failure notifications through ntfy
     - cleans staging data on exit
 
-Recent observed run:
-    2026-09-25
+The systemd service sets:
+    HOME=/root
 
-Result:
-    successful peer backup to ScopeCreep
-    successful B2 snapshot upload
+This removes the previous restic cache warning caused by an undefined HOME.
 
-Observed peer snapshot:
-    d15e7ae3
-    ~365.5 MiB logical snapshot size
+Validated 2026-10-01 backup run:
 
-Observed B2 snapshot:
-    4ee2f906
-    ~365.5 MiB logical snapshot size
+ScopeCreep:
+    snapshot 8edc0c6a
+    6637 files
+    ~385.865 MiB logical size
 
-NOTE:
-    A historical/questioned Backblaze B2 maintenance/quota issue is still being
-    investigated separately. Do not treat that open investigation as evidence
-    that ordinary daily B2 snapshot uploads are currently failing; the
-    2026-09-25 upload completed successfully.
+FrontDesk:
+    repository ID prefix 23c4921c
+    snapshot dd0dc23d
+    6637 files
+    ~385.865 MiB logical size
+    ~117.718 MiB stored on first upload
 
-Restic log warning:
-    systemd-launched restic commands currently report that neither HOME nor
-    XDG_CACHE_HOME is defined, so restic cannot use its cache directory.
+Representative FrontDesk restore test:
+    restored /manifest/host.txt
+    restored /root/var/lib/dn42landing/peering.db
+    restored SQLite database returned:
+        PRAGMA quick_check;
+        ok
 
-    This warning did not prevent the observed backup from succeeding.
+FrontDesk repository maintenance:
+    script:
+        /usr/local/sbin/frontdesk-backup-maintenance
+    tracked source:
+        VPS/Backup/Clanker/frontdesk-repo-maintenance.sh
+    timer:
+        frontdesk-backup-maintenance.timer
+    policy:
+        keep every snapshot within the most recent 90 days
+        run unlock, forget --prune, check, and stats separately from daily backup
+    first manual maintenance run:
+        2026-10-01
+        status=0/SUCCESS
 
 ===============================================================================
 21. BACKUP CONTENT
 ===============================================================================
 
-The current backup stages most recovery-relevant host/application state rather
-than cloning the entire filesystem.
+The current backup stages recovery-relevant host/application state rather than
+cloning the entire filesystem.
 
 Important staged categories include:
 
 Host configuration:
     most of /etc
 
-Application/deployment data:
+Application/state trees:
     /home/joyfulreaper/.ssh
     /var/lib/happygopher
     /var/lib/happygopher-mystery
@@ -1586,20 +1638,39 @@ Application/deployment data:
     /var/lib/randomgithub
     /var/lib/wsiwot
     /var/lib/missioncontrol-agent
+
+Deployment/configuration trees:
     /opt/stacks
     /opt/dockge
     /opt/smolsearch
+    /opt/dn42landing
+    /opt/ygglanding
+    /opt/vpn-landing
+    /opt/missioncontrol-agent
     /opt/joyful-stack
 
-Consistent SQLite snapshots:
-    known live SQLite databases are copied using SQLite's .backup mechanism and
-    checked with PRAGMA quick_check.
+DN42Landing state:
+    /var/lib/dn42landing/peering.db
 
-Selected named-volume state:
+The DN42 quote-suggestion data and peering-request data share this database; the
+quote suggestions are not a separate database.
+
+Consistent SQLite snapshots:
+    known live SQLite databases are copied with SQLite's .backup mechanism and
+    verified with PRAGMA quick_check.
+
+Selected Docker named-volume state:
     Mission Control archive data
     GitActivity data
-    Dashboard authentication/data-protection state
+    Dashboard authentication/application state
+    Dashboard Data Protection keys
+    Dozzle profile/configuration state
     NATS JetStream state
+
+NATS:
+    the container is briefly stopped while JetStream state is tarred, then
+    immediately restarted; cleanup attempts recovery if a backup exits while NATS
+    is stopped.
 
 Recovery manifest generated during backup includes:
     host/platform information
@@ -1619,7 +1690,18 @@ Recovery manifest generated during backup includes:
     root crontab
     joyfulreaper crontab
 
-Regeneratable runtime state is intentionally not treated as primary backup data.
+Regeneratable runtime/cache state is intentionally not treated as primary backup
+data.
+
+Intentionally excluded from Clanker's own ordinary backup:
+    /var/lib/restic
+        Clanker acts as a storage host for peer restic repositories; recursively
+        including these in Clanker's own backup would be inappropriate
+    /var/lib/docker wholesale
+    /var/lib/containerd wholesale
+    Docker images/layers/build cache
+    package caches
+    transient molasses-watch counters/state
 
 ===============================================================================
 22. BACKUP SECRETS / OUT-OF-BAND RECOVERY REQUIREMENTS
@@ -1628,23 +1710,23 @@ Regeneratable runtime state is intentionally not treated as primary backup data.
 Backup secrets live under:
     /etc/vps-backup/
 
-Observed secret/config filenames:
+Known secret/config filenames include:
+    peer.env
+    peer-repository-password
+    frontdesk.env
+    frontdesk-repository-password
+    ntfy.env
     b2.env
     molasses-repository-password
-    ntfy.env
-    peer-repository-password
-    peer.env
     scopecreep-repository-password
 
 These files are secret-bearing and must NOT be committed to the public
 UsefulScripts repository.
 
 The backup deliberately excludes /etc/vps-backup from its normal staged /etc
-copy.
+copy. These files remain a P0 out-of-band recovery dependency.
 
-Therefore these files are a P0 out-of-band recovery dependency.
-
-Other P0 secret/identity material includes:
+Other secret/identity material present in the encrypted backup may include:
     /etc/wireguard/
     /etc/yggdrasil/
     /home/joyfulreaper/.ssh/
@@ -1666,8 +1748,8 @@ rest-server:
 Local restic storage:
     /var/lib/restic
 
-Observed total local repository size at 2026-09-25 inventory:
-    ~36 MB
+This local peer repository tree is deliberately not folded back into Clanker's
+own backup staging.
 
 Peer repository maintenance timers on Clanker:
     scopecreep-backup-maintenance.timer
@@ -1708,20 +1790,27 @@ P1 - important persistent application state:
     /var/lib/randomgithub
     /var/lib/wsiwot
     /var/lib/missioncontrol-agent
+    /var/lib/dn42landing/peering.db
     /opt/smolsearch/data
     /opt/dockge/data
     important named-volume state
     local peer restic repositories where Clanker is storage host
 
-P2 - useful/reproducible configuration:
+P2 - useful/reproducible configuration and deployment trees:
     /etc/bird
     /etc/docker/daemon.json
     /etc/nginx
     /etc/ufw
     /etc/sysctl.d
     /etc/systemd/system
-    Compose files
-    application configuration under /opt
+    /opt/stacks
+    /opt/dockge
+    /opt/smolsearch
+    /opt/dn42landing
+    /opt/ygglanding
+    /opt/vpn-landing
+    /opt/missioncontrol-agent
+    /opt/joyful-stack
     UsefulScripts checkout
 
 P3 - useful operational/history state:
@@ -1730,6 +1819,7 @@ P3 - useful operational/history state:
     Beszel history
     ntfy state
     NATS JetStream
+    Dozzle profile/configuration
     selected TCPNoise history/logs
 
 P4 - regenerate instead:
@@ -1876,9 +1966,12 @@ Suggested high-level rebuild order:
        daily Clanker backup timer
        ScopeCreep repository maintenance
        Molasses repository maintenance
-       B2 repository maintenance
+       FrontDesk repository maintenance
        certificate renewal
        other custom timers
+
+    Leave Backblaze B2 maintenance disabled unless the B2 investigation is
+    explicitly resolved and the destination is intentionally re-enabled.
 
 22. Verify:
        WireGuard peers
@@ -1893,8 +1986,9 @@ Suggested high-level rebuild order:
        RandomSteam / RandomGitHub / WSIWOT
        Happy* services
        backup notifications
+       ScopeCreep repository access
+       FrontDesk repository access and representative restore
        peer backup repository access
-       B2 snapshot upload
 
 23. Re-enable optional/manual services such as TCPNoise.
 
@@ -2053,7 +2147,9 @@ Still worth checking, cleaning up or deciding:
        free space before large image rebuilds
 
 9. Backup design / recovery hygiene:
-       keep ScopeCreep/Molasses/B2 restore procedures documented
+       keep ScopeCreep/Molasses/FrontDesk restore procedures documented
+       keep Backblaze B2 quarantined until its cost/maintenance viability is
+       deliberately re-evaluated
        retain an out-of-band copy of secret-bearing recovery material
        periodically perform a representative restore test
 

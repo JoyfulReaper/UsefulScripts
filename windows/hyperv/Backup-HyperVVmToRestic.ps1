@@ -86,23 +86,23 @@ try {
 
     $snapshotCreated = $true
 
-    Write-Step "Listing snapshots"
-    restic -r $Repository snapshots --tag $VmName
+	Write-Step "Listing snapshots"
+	restic -r $Repository snapshots --tag "hyperv,$VmName"
 
-    if (-not $SkipPrune) {
-        Write-Step "Applying retention"
-        restic -r $Repository forget `
-			--tag hyperv `
-			--tag $VmName `
+	if (-not $SkipPrune) {
+		Write-Step "Applying retention"
+
+		restic -r $Repository forget `
+			--tag "hyperv,$VmName" `
 			--keep-last $KeepLast
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "restic forget/prune failed with exit code $LASTEXITCODE"
-        }
-    }
-    else {
-        Write-Step "Skipping prune"
-    }
+		if ($LASTEXITCODE -ne 0) {
+			throw "restic forget failed with exit code $LASTEXITCODE"
+		}
+	}
+	else {
+		Write-Step "Skipping retention"
+	}
 
     Write-Step "Cleaning staging export"
     Remove-Item $exportDir -Recurse -Force

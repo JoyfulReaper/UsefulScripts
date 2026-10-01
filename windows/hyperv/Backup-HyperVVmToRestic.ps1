@@ -92,10 +92,9 @@ try {
     if (-not $SkipPrune) {
         Write-Step "Applying retention"
         restic -r $Repository forget `
-            --tag hyperv `
-            --tag $VmName `
-            --keep-last $KeepLast `
-            --prune
+			--tag hyperv `
+			--tag $VmName `
+			--keep-last $KeepLast
 
         if ($LASTEXITCODE -ne 0) {
             throw "restic forget/prune failed with exit code $LASTEXITCODE"

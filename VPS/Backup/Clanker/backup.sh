@@ -16,9 +16,6 @@ readonly FRONTDESK_ENV="/etc/vps-backup/frontdesk.env"
 readonly FRONTDESK_PASSWORD_FILE="/etc/vps-backup/frontdesk-repository-password"
 readonly FRONTDESK_REPOSITORY="rest:http://10.99.0.14:8000/clanker/"
 
-readonly B2_ENV="/etc/vps-backup/b2.env"
-readonly B2_REPOSITORY="s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-clanker"
-
 readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
 readonly NTFY_URL="http://127.0.0.1:5197/vps-backups"
 
@@ -217,9 +214,6 @@ done
 [[ -f "$FRONTDESK_PASSWORD_FILE" ]] ||
     die "Missing $FRONTDESK_PASSWORD_FILE"
 
-[[ -f "$B2_ENV" ]] ||
-    die "Missing $B2_ENV"
-
 [[ -f "$NTFY_ENV" ]] ||
     die "Missing $NTFY_ENV"
 
@@ -240,6 +234,10 @@ fi
 #
 # Repository-specific environment files are loaded only around the matching
 # restic invocation so REST credentials for different servers cannot collide.
+#
+# Backblaze B2 is intentionally excluded from the normal backup path while its
+# suitability/cost/maintenance behavior is under investigation. Its separate
+# maintenance tooling remains available but must not gate required backups.
 #
 
 set -a
@@ -286,20 +284,6 @@ restic_with_env "$FRONTDESK_ENV" \
     die "Unable to access Clanker repository on FrontDesk."
 
 
-#
-# Verify B2 repository
-#
-
-CURRENT_STAGE="B2 repository connectivity"
-
-log "Checking Backblaze B2 repository connectivity."
-
-restic_with_env "$B2_ENV" \
-    -r "$B2_REPOSITORY" \
-    --password-file "$PEER_PASSWORD_FILE" \
-    cat config \
-    >/dev/null ||
-    die "Unable to access Clanker repository on Backblaze B2."
 
 
 #
@@ -624,26 +608,6 @@ log "Sending snapshot to FrontDesk."
 )
 
 
-#
-# Backup to Backblaze B2
-#
-
-CURRENT_STAGE="restic B2 backup"
-
-log "Sending snapshot to Backblaze B2."
-
-(
-    cd "$STAGING"
-
-    restic_with_env "$B2_ENV" \
-        -r "$B2_REPOSITORY" \
-        --password-file "$PEER_PASSWORD_FILE" \
-        backup . \
-        --host clanker \
-        --tag clanker \
-        --tag offsite \
-        --tag b2
-)
 
 
 #
@@ -671,14 +635,6 @@ if [[ "$(date +%u)" == "7" ]]; then
         --password-file "$FRONTDESK_PASSWORD_FILE" \
         check
 
-    CURRENT_STAGE="weekly B2 repository check"
-
-    log "Running weekly Backblaze B2 repository check."
-
-    restic_with_env "$B2_ENV" \
-        -r "$B2_REPOSITORY" \
-        --password-file "$PEER_PASSWORD_FILE" \
-        check
 else
     log "Skipping full repository checks; scheduled for Sunday."
 fi
@@ -710,18 +666,10 @@ restic_with_env "$FRONTDESK_ENV" \
     --host clanker \
     --latest 3 || true
 
-log "Recent Backblaze B2 snapshots."
-
-restic_with_env "$B2_ENV" \
-    -r "$B2_REPOSITORY" \
-    --password-file "$PEER_PASSWORD_FILE" \
-    snapshots \
-    --host clanker \
-    --latest 3 || true
 
 SUCCESS_MESSAGE="$(
     printf \
-        'Host: Clanker\nDestinations: ScopeCreep + FrontDesk + Backblaze B2\nRuntime: %s\nStatus: all configured backups completed successfully' \
+        'Host: Clanker\nDestinations: ScopeCreep + FrontDesk\nRuntime: %s\nStatus: required backups completed successfully' \
         "$(duration)"
 )"
 

@@ -71,9 +71,10 @@ try {
 
     Write-Step "Running restic backup"
     restic -r $Repository backup $exportDir `
-        --tag hyperv `
-        --tag $VmName `
-        --limit-upload $LimitUploadKiB
+		--tag hyperv `
+		--tag $VmName `
+		--parent latest `
+		--limit-upload $LimitUploadKiB
 
     if ($LASTEXITCODE -ne 0) {
         throw "restic backup failed with exit code $LASTEXITCODE"

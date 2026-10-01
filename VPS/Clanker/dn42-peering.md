@@ -34,6 +34,12 @@ Reusable notes for adding and troubleshooting DN42 BGP peers on Clanker.
 - BGP transport: IPv6 link-local
 - Peer link-local: `fe80::1732`
 - Local link-local: `fe80::425`
+- Policy: controlled full-table IPv4/IPv6 transit
+- BIRD transit tables: `baragoon_transit4`, `baragoon_transit6`
+- Linux policy-routing table: `1732`
+- Rate limit: 50 Mbps in each direction
+- Policy service: `dn42-baragoon-transit-policy.service`
+- Rate-limit service: `dn42-baragoon-rate-limit.service`
 
 ### HEADSCARF175 EWR
 
@@ -49,31 +55,60 @@ Reusable notes for adding and troubleshooting DN42 BGP peers on Clanker.
 
 ## Routing Policy
 
-Clanker currently behaves as a stub DN42 AS.
-
-Peers may advertise DN42 routes to Clanker, but Clanker only exports its own
-registered prefixes:
+Clanker's default external-peer policy is still own-prefix-only export:
 
 - `172.20.220.48/28`
 - `fdf0:e12c:5528::/48`
 
-Do not casually replace the export policy with `export all`.
+Do not casually replace a normal peer's export policy with `export all`.
 
-Transit routing should be enabled deliberately only after considering:
+Baragoon NY is an explicit controlled-transit exception. Clanker provides
+Baragoon with full-table IPv4 and IPv6 transit through dedicated alternate
+BIRD tables:
 
-- peer routing policy
-- route leaks
-- local preference
-- failure behavior
-- bandwidth / VPS transfer limits
-- monitoring
-- whether third-party DN42 traffic should be carried at all
+    baragoon_transit4
+    baragoon_transit6
 
-Verify exports with:
+Traffic arriving from `wg-dn42-ny1` is handled by Linux policy-routing table
+`1732`.
+
+The important rule order is:
+
+    priority 21860  own-prefix destination bypass -> main
+    priority 21870  iif wg-dn42-ny1 -> table 1732
+
+The own-prefix bypass must remain ahead of the Baragoon ingress rule.
+
+Third-party routes learned from Baragoon are excluded from the transit return
+view so traffic does not use Baragoon as its own transit provider. Baragoon
+routes with AS-path length 1 are preserved so directly originated prefixes
+remain reachable over the direct session.
+
+The Baragoon path is rate-limited to 50 Mbps in each direction using:
+
+    dn42-baragoon-transit-policy.service
+    dn42-baragoon-rate-limit.service
+
+The controlled-transit policy is live. master4/master6 are sorted and the
+Baragoon IPv4/IPv6 channels use `secondary on`, allowing BIRD to try an
+alternate candidate when the selected best route was learned from Baragoon
+and is rejected by the peer-specific export filter.
+
+For normal peers, verify own-prefix-only exports with:
 
     sudo birdc show route export <protocol>
 
-Expected current result is one IPv4 prefix and one IPv6 prefix.
+For Baragoon transit troubleshooting, also inspect:
+
+    sudo birdc show route table baragoon_transit4
+    sudo birdc show route table baragoon_transit6
+    ip rule show
+    ip route show table 1732
+    systemctl status dn42-baragoon-transit-policy.service
+    systemctl status dn42-baragoon-rate-limit.service
+
+Transit should remain an explicit per-peer decision. Do not accidentally turn
+Clanker into unrestricted transit between every external peer.
 
 ## ROA Validation
 

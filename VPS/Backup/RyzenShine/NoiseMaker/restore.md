@@ -16,7 +16,27 @@ Notifications: ntfy success/failure
 
 The scheduled restic task should only be installed while a VM named `NoiseMaker` is actually registered in Hyper-V.
 
-As of 2026-10-01, `Get-VM -Name NoiseMaker` returned no VM, so the quarterly task has not been installed yet.
+On 2026-10-01 the VM was confirmed registered and running normally:
+
+```text
+Name: NoiseMaker
+VM ID: 5E3AB739-B31F-48E4-A66C-8AC2AEB4E374
+State: Running
+Status: Operating normally
+Configuration: C:\ProgramData\Microsoft\Windows\Hyper-V
+Disk: S:\VMs\TcpNoiseResidential.vhdx
+```
+
+The current VHDX is a standalone dynamic base disk with no parent:
+
+```text
+VhdType: Dynamic
+File size: 4299161600 bytes
+Virtual size: 12884901888 bytes
+ParentPath: (blank)
+```
+
+`Get-DiskImage` reported the VHDX was not mounted into the Windows host. Hyper-V reported the disk attached to the running NoiseMaker VM.
 
 ## Verified legacy recovery copy
 
@@ -133,8 +153,11 @@ Hyper-V configuration present:        VERIFIED
 Base VHDX present:                    VERIFIED
 Checkpoint AVHDX chain present:       VERIFIED
 Full isolated boot restore:           NOT TESTED
-Quarterly restic task installed:      NO - VM currently not registered
+Current NoiseMaker VM registered:     VERIFIED
+Current NoiseMaker VM running:        VERIFIED
+Current VHDX has no parent:            VERIFIED
+Quarterly restic task installed:      NOT YET
 Quarterly restic scheduled run:       NOT TESTED
 ```
 
-The legacy backup is useful recovery coverage, but it should remain distinct from future restic snapshots until NoiseMaker is restored or otherwise registered in Hyper-V.
+The legacy backup remains useful historical recovery coverage. Keep it distinct from future restic snapshots; the current running VM uses a standalone merged base VHDX, while the legacy archive preserves the older checkpoint chain.

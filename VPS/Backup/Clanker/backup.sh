@@ -642,36 +642,6 @@ log "Sending snapshot to FrontDesk."
 
 
 #
-# Repository verification
-#
-# Sunday = ISO weekday 7.
-#
-
-if [[ "$(date +%u)" == "7" ]]; then
-    CURRENT_STAGE="weekly peer repository check"
-
-    log "Running weekly ScopeCreep repository check."
-
-    restic_with_env "$PEER_ENV" \
-        -r "$PEER_REPOSITORY" \
-        --password-file "$PEER_PASSWORD_FILE" \
-        check
-
-    CURRENT_STAGE="weekly FrontDesk repository check"
-
-    log "Running weekly FrontDesk repository check."
-
-    restic_with_env "$FRONTDESK_ENV" \
-        -r "$FRONTDESK_REPOSITORY" \
-        --password-file "$FRONTDESK_PASSWORD_FILE" \
-        check
-
-else
-    log "Skipping full repository checks; scheduled for Sunday."
-fi
-
-
-#
 # Success
 #
 

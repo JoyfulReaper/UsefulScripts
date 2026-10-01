@@ -339,6 +339,7 @@ FILESYSTEM_PATHS=(
     /opt/stacks
     /opt/dockge
     /opt/smolsearch
+    /opt/dn42landing
 
     /opt/joyful-stack
 )

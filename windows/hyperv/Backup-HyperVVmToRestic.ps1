@@ -12,13 +12,18 @@ param(
 
     [int]$KeepLast = 3,
 
-    [switch]$SkipRetention
+    [string]$NtfyUrl = "http://10.99.0.1:5197/vps-backups",
+
+    [switch]$SkipRetention,
+
+    [switch]$SkipNotifications
 )
 
 $ErrorActionPreference = "Stop"
 
 function Write-Step {
     param([string]$Message)
+
     Write-Host ""
     Write-Host "=== $Message ==="
 }
@@ -31,13 +36,72 @@ function Require-EnvVar {
     }
 }
 
-Require-EnvVar "RESTIC_REST_USERNAME"
-Require-EnvVar "RESTIC_REST_PASSWORD"
-Require-EnvVar "RESTIC_PASSWORD"
+function Format-Duration {
+    param([TimeSpan]$Duration)
+
+    "{0}m {1:00}s" -f [math]::Floor($Duration.TotalMinutes), $Duration.Seconds
+}
+
+function Send-NtfyNotification {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Title,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("min", "low", "default", "high", "max")]
+        [string]$Priority,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message,
+
+        [string]$Tags
+    )
+
+    if ($SkipNotifications) {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:NTFY_TOKEN)) {
+        Write-Warning "NTFY_TOKEN is not set; notification skipped."
+        return
+    }
+
+    $headers = @{
+        Authorization = "Bearer $env:NTFY_TOKEN"
+        Title         = $Title
+        Priority      = $Priority
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Tags)) {
+        $headers.Tags = $Tags
+    }
+
+    try {
+        Invoke-RestMethod `
+            -Uri $NtfyUrl `
+            -Method Post `
+            -Headers $headers `
+            -Body $Message `
+            -ContentType "text/plain; charset=utf-8" `
+            -TimeoutSec 10 `
+            | Out-Null
+    }
+    catch {
+        Write-Warning "ntfy notification failed: $($_.Exception.Message)"
+    }
+}
 
 $exportDir = Join-Path $StagingRoot $VmName
-
 $startedAt = Get-Date
+$currentStage = "startup"
+$exportGiB = $null
+$snapshotId = $null
+$hostName = if ([string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+    [System.Net.Dns]::GetHostName()
+}
+else {
+    $env:COMPUTERNAME
+}
 
 Write-Step "Backup starting"
 Write-Host "VM:          $VmName"
@@ -47,6 +111,14 @@ Write-Host "Throttle:    $LimitUploadKiB KiB/s"
 Write-Host "Started:     $startedAt"
 
 try {
+    $currentStage = "credential validation"
+
+    Require-EnvVar "RESTIC_REST_USERNAME"
+    Require-EnvVar "RESTIC_REST_PASSWORD"
+    Require-EnvVar "RESTIC_PASSWORD"
+
+    $currentStage = "VM preflight"
+
     Write-Step "Checking VM"
     $vm = Get-VM -Name $VmName
     $vm | Select-Object Name, State, Status, Generation | Format-List
@@ -55,6 +127,8 @@ try {
     if ($checkpoints) {
         throw "VM has checkpoints. Refusing backup until checkpoints are reviewed/merged."
     }
+
+    $currentStage = "staging initialization"
 
     Write-Step "Checking staging directory"
 
@@ -65,6 +139,8 @@ try {
     Write-Step "Creating staging directory"
     New-Item -ItemType Directory -Path $exportDir | Out-Null
 
+    $currentStage = "Hyper-V export"
+
     Write-Step "Exporting VM"
     Export-VM -Name $VmName -Path $exportDir
 
@@ -72,6 +148,8 @@ try {
     $exportBytes = (Get-ChildItem $exportDir -Recurse -Force -File | Measure-Object Length -Sum).Sum
     $exportGiB = [math]::Round($exportBytes / 1GB, 2)
     Write-Host "Export size: $exportGiB GiB"
+
+    $currentStage = "restic backup"
 
     Write-Step "Running restic backup"
     restic -r $Repository backup $exportDir `
@@ -83,10 +161,38 @@ try {
         throw "restic backup failed with exit code $LASTEXITCODE"
     }
 
+    $currentStage = "snapshot verification"
+
     Write-Step "Listing snapshots"
     restic -r $Repository snapshots --tag "hyperv,$VmName"
 
+    if ($LASTEXITCODE -ne 0) {
+        throw "restic snapshots failed with exit code $LASTEXITCODE"
+    }
+
+    try {
+        $latestSnapshotJson = restic -r $Repository snapshots `
+            --tag "hyperv,$VmName" `
+            --latest 1 `
+            --json
+
+        if ($LASTEXITCODE -eq 0) {
+            $latestSnapshot = $latestSnapshotJson |
+                ConvertFrom-Json |
+                Select-Object -First 1
+
+            if ($latestSnapshot.id) {
+                $snapshotId = $latestSnapshot.id.Substring(0, [math]::Min(8, $latestSnapshot.id.Length))
+            }
+        }
+    }
+    catch {
+        Write-Warning "Unable to capture latest snapshot ID for notification: $($_.Exception.Message)"
+    }
+
     if (-not $SkipRetention) {
+        $currentStage = "retention"
+
         Write-Step "Applying retention"
 
         restic -r $Repository forget `
@@ -101,26 +207,71 @@ try {
         Write-Step "Skipping retention"
     }
 
+    $currentStage = "staging cleanup"
+
     Write-Step "Cleaning staging export"
     Remove-Item $exportDir -Recurse -Force
 
     $endedAt = Get-Date
     $duration = $endedAt - $startedAt
+    $durationText = Format-Duration $duration
+
+    $currentStage = "complete"
 
     Write-Step "Backup completed"
     Write-Host "VM:       $VmName"
     Write-Host "Duration: $duration"
     Write-Host "Ended:    $endedAt"
+
+    $successLines = @(
+        "Host: $hostName"
+        "VM: $VmName"
+        "Runtime: $durationText"
+        "Export size: $exportGiB GiB"
+        "Throttle: $LimitUploadKiB KiB/s"
+        "Retention: $(if ($SkipRetention) { 'skipped' } else { "keep last $KeepLast" })"
+    )
+
+    if ($snapshotId) {
+        $successLines += "Snapshot: $snapshotId"
+    }
+
+    Send-NtfyNotification `
+        -Title "$hostName $VmName backup succeeded" `
+        -Priority "default" `
+        -Tags "white_check_mark,floppy_disk" `
+        -Message ($successLines -join [Environment]::NewLine)
 }
 catch {
-    Write-Host ""
-    Write-Host "BACKUP FAILED: $($_.Exception.Message)" -ForegroundColor Red
+    $failure = $_
+    $endedAt = Get-Date
+    $duration = $endedAt - $startedAt
+    $durationText = Format-Duration $duration
+    $stagingRetained = Test-Path $exportDir
 
-    if (Test-Path $exportDir) {
+    Write-Host ""
+    Write-Host "BACKUP FAILED: $($failure.Exception.Message)" -ForegroundColor Red
+
+    if ($stagingRetained) {
         Write-Host ""
         Write-Host "Staging export was left in place for inspection:"
         Write-Host $exportDir
     }
 
-    throw
+    $failureMessage = @(
+        "Host: $hostName"
+        "VM: $VmName"
+        "Stage: $currentStage"
+        "Runtime: $durationText"
+        "Staging retained: $stagingRetained"
+        "Error: $($failure.Exception.Message)"
+    ) -join [Environment]::NewLine
+
+    Send-NtfyNotification `
+        -Title "$hostName $VmName backup FAILED" `
+        -Priority "high" `
+        -Tags "x,floppy_disk" `
+        -Message $failureMessage
+
+    throw $failure
 }

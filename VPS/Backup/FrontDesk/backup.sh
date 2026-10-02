@@ -11,6 +11,9 @@ readonly SCOPECREEP_ENV="/etc/vps-backup/scopecreep.env"
 readonly SCOPECREEP_PASSWORD_FILE="/etc/vps-backup/scopecreep-repository-password"
 readonly SCOPECREEP_REPOSITORY="rest:http://10.99.0.9:8000/frontdesk/"
 
+readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
+readonly NTFY_URL="http://10.99.0.1:5197/vps-backups"
+
 START_EPOCH="$(date +%s)"
 CURRENT_STAGE="startup"
 
@@ -33,6 +36,33 @@ duration()
 }
 
 
+notify()
+{
+    local title="$1"
+    local priority="$2"
+    local message="$3"
+
+    if [[ -z "${NTFY_TOKEN:-}" ]]; then
+        log "WARNING: ntfy token unavailable; notification skipped."
+        return 0
+    fi
+
+    if ! curl \
+        --fail \
+        --silent \
+        --show-error \
+        -H "Authorization: Bearer $NTFY_TOKEN" \
+        -H "Title: $title" \
+        -H "Priority: $priority" \
+        -d "$message" \
+        "$NTFY_URL" \
+        >/dev/null
+    then
+        log "WARNING: ntfy notification failed."
+    fi
+}
+
+
 die()
 {
     log "ERROR: $*"
@@ -43,8 +73,24 @@ die()
 cleanup()
 {
     local exit_code=$?
+    local message
 
     trap - EXIT
+
+    if [[ "$exit_code" -ne 0 ]]; then
+        message="$(
+            printf \
+                'Host: FrontDesk\nStage: %s\nExit code: %s\nRuntime: %s' \
+                "$CURRENT_STAGE" \
+                "$exit_code" \
+                "$(duration)"
+        )"
+
+        notify \
+            "FrontDesk backup FAILED" \
+            "high" \
+            "$message"
+    fi
 
     rm -rf "$STAGING" 2>/dev/null || true
 
@@ -99,7 +145,8 @@ for command in \
     ip \
     ss \
     systemctl \
-    dpkg-query
+    dpkg-query \
+    curl
 do
     command -v "$command" >/dev/null ||
         die "Required command not found: $command"
@@ -112,12 +159,21 @@ done
 [[ -f "$SCOPECREEP_PASSWORD_FILE" ]] ||
     die "Missing $SCOPECREEP_PASSWORD_FILE"
 
+[[ -f "$NTFY_ENV" ]] ||
+    die "Missing $NTFY_ENV"
+
 
 exec 9>/run/lock/vps-backup.lock
 
 if ! flock -n 9; then
     die "Another FrontDesk backup or repository-maintenance run is active."
 fi
+
+
+set -a
+# shellcheck disable=SC1091
+source "$NTFY_ENV"
+set +a
 
 
 log "Starting FrontDesk recovery-configuration backup."
@@ -315,3 +371,15 @@ restic_scopecreep \
     snapshots \
     --host frontdesk \
     --latest 3 || true
+
+
+SUCCESS_MESSAGE="$(
+    printf \
+        'Host: FrontDesk\nDestination: ScopeCreep\nRuntime: %s\nStatus: recovery-configuration backup completed successfully' \
+        "$(duration)"
+)"
+
+notify \
+    "FrontDesk backup succeeded" \
+    "default" \
+    "$SUCCESS_MESSAGE"

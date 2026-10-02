@@ -202,6 +202,8 @@ services:
         condition: service_healthy
 
   gitactivity:
+    image: ghcr.io/joyfulreaper/missioncontrol-gitactivity:${MISSIONCONTROL_GITACTIVITY_IMAGE_TAG:-dev}
+
     build:
       context: ./MissionControl
       dockerfile: Dockerfile.gitactivity
@@ -419,6 +421,8 @@ services:
       - backend
 
   gateway:
+    image: ghcr.io/joyfulreaper/missioncontrol-gateway:${MISSIONCONTROL_GATEWAY_IMAGE_TAG:-dev}
+
     build:
       context: ./MissionControl
       dockerfile: Dockerfile.gateway
@@ -526,6 +530,8 @@ services:
       - backend
 
   archive:
+    image: ghcr.io/joyfulreaper/missioncontrol-archive:${MISSIONCONTROL_ARCHIVE_IMAGE_TAG:-dev}
+
     build:
       context: ./MissionControl
       dockerfile: Dockerfile.archive
@@ -656,6 +662,8 @@ services:
       - backend
 
   dashboard:
+    image: ghcr.io/joyfulreaper/missioncontrol-dashboard:${MISSIONCONTROL_DASHBOARD_IMAGE_TAG:-dev}
+
     build:
       context: ./MissionControl
       dockerfile: Dockerfile.dashboard

@@ -1,0 +1,15 @@
+[Unit]
+Description=FrontDesk recovery-configuration backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vps-backup
+Environment=HOME=/root
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+TimeoutStartSec=0

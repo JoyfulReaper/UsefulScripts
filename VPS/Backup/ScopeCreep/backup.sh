@@ -11,8 +11,9 @@ readonly PEER_ENV="/etc/vps-backup/peer.env"
 readonly PEER_PASSWORD_FILE="/etc/vps-backup/peer-repository-password"
 readonly PEER_REPOSITORY="rest:http://10.99.0.1:8000/scopecreep/"
 
-readonly B2_ENV="/etc/vps-backup/b2.env"
-readonly B2_REPOSITORY="s3:https://s3.us-east-005.backblazeb2.com/kgivler-backup-scopecreep"
+readonly FRONTDESK_ENV="/etc/vps-backup/frontdesk.env"
+readonly FRONTDESK_PASSWORD_FILE="/etc/vps-backup/frontdesk-repository-password"
+readonly FRONTDESK_REPOSITORY="rest:http://10.99.0.14:8000/scopecreep/"
 
 readonly NTFY_ENV="/etc/vps-backup/ntfy.env"
 readonly NTFY_URL="http://10.99.0.1:5197/vps-backups"
@@ -116,6 +117,24 @@ rsync_safe()
 }
 
 
+restic_with_env()
+{
+    local env_file="$1"
+    shift
+
+    (
+        set -a
+
+        # shellcheck disable=SC1090
+        source "$env_file"
+
+        set +a
+
+        exec restic "$@"
+    )
+}
+
+
 snapshot_sqlite()
 {
     local source="$1"
@@ -179,8 +198,11 @@ done
 [[ -f "$PEER_PASSWORD_FILE" ]] ||
     die "Missing $PEER_PASSWORD_FILE"
 
-[[ -f "$B2_ENV" ]] ||
-    die "Missing $B2_ENV"
+[[ -f "$FRONTDESK_ENV" ]] ||
+    die "Missing $FRONTDESK_ENV"
+
+[[ -f "$FRONTDESK_PASSWORD_FILE" ]] ||
+    die "Missing $FRONTDESK_PASSWORD_FILE"
 
 [[ -f "$NTFY_ENV" ]] ||
     die "Missing $NTFY_ENV"
@@ -198,23 +220,22 @@ fi
 
 
 #
-# Credentials
+# Notification credentials.
+#
+# Repository-specific environment files are loaded only around the matching
+# restic invocation so REST credentials for different servers cannot collide.
+#
+# Backblaze B2 is intentionally excluded from the normal backup path while its
+# suitability/cost/maintenance behavior is under investigation. Its separate
+# maintenance tooling remains available but must not gate required backups.
 #
 
 set -a
 
 # shellcheck disable=SC1091
-source "$PEER_ENV"
-
-# shellcheck disable=SC1091
-source "$B2_ENV"
-
-# shellcheck disable=SC1091
 source "$NTFY_ENV"
 
 set +a
-
-
 
 
 log "Starting ScopeCreep backup."
@@ -228,7 +249,7 @@ CURRENT_STAGE="peer repository connectivity"
 
 log "Checking Clanker repository connectivity."
 
-restic \
+restic_with_env "$PEER_ENV" \
     -r "$PEER_REPOSITORY" \
     --password-file "$PEER_PASSWORD_FILE" \
     cat config \
@@ -237,19 +258,19 @@ restic \
 
 
 #
-# Verify B2 repository
+# Verify FrontDesk repository
 #
 
-CURRENT_STAGE="B2 repository connectivity"
+CURRENT_STAGE="FrontDesk repository connectivity"
 
-log "Checking Backblaze B2 repository connectivity."
+log "Checking FrontDesk repository connectivity."
 
-restic \
-    -r "$B2_REPOSITORY" \
-    --password-file "$PEER_PASSWORD_FILE" \
+restic_with_env "$FRONTDESK_ENV" \
+    -r "$FRONTDESK_REPOSITORY" \
+    --password-file "$FRONTDESK_PASSWORD_FILE" \
     cat config \
     >/dev/null ||
-    die "Unable to access ScopeCreep repository on Backblaze B2."
+    die "Unable to access ScopeCreep repository on FrontDesk."
 
 
 #
@@ -418,7 +439,7 @@ log "Sending snapshot to Clanker."
 (
     cd "$STAGING"
 
-    restic \
+    restic_with_env "$PEER_ENV" \
         -r "$PEER_REPOSITORY" \
         --password-file "$PEER_PASSWORD_FILE" \
         backup . \
@@ -429,24 +450,23 @@ log "Sending snapshot to Clanker."
 
 
 #
-# Backup to Backblaze B2
+# Backup to FrontDesk
 #
 
-CURRENT_STAGE="restic B2 backup"
+CURRENT_STAGE="restic FrontDesk backup"
 
-log "Sending snapshot to Backblaze B2."
+log "Sending snapshot to FrontDesk."
 
 (
     cd "$STAGING"
 
-    restic \
-        -r "$B2_REPOSITORY" \
-        --password-file "$PEER_PASSWORD_FILE" \
+    restic_with_env "$FRONTDESK_ENV" \
+        -r "$FRONTDESK_REPOSITORY" \
+        --password-file "$FRONTDESK_PASSWORD_FILE" \
         backup . \
         --host scopecreep \
         --tag scopecreep \
-        --tag offsite \
-        --tag b2
+        --tag frontdesk
 )
 
 
@@ -460,18 +480,18 @@ log "ScopeCreep backup completed successfully in $(duration)."
 
 log "Recent Clanker snapshots."
 
-restic \
+restic_with_env "$PEER_ENV" \
     -r "$PEER_REPOSITORY" \
     --password-file "$PEER_PASSWORD_FILE" \
     snapshots \
     --host scopecreep \
     --latest 3 || true
 
-log "Recent Backblaze B2 snapshots."
+log "Recent FrontDesk snapshots."
 
-restic \
-    -r "$B2_REPOSITORY" \
-    --password-file "$PEER_PASSWORD_FILE" \
+restic_with_env "$FRONTDESK_ENV" \
+    -r "$FRONTDESK_REPOSITORY" \
+    --password-file "$FRONTDESK_PASSWORD_FILE" \
     snapshots \
     --host scopecreep \
     --latest 3 || true
@@ -479,7 +499,7 @@ restic \
 
 SUCCESS_MESSAGE="$(
     printf \
-        'Host: ScopeCreep\nDestinations: Clanker + Backblaze B2\nRuntime: %s\nStatus: both backups completed successfully' \
+        'Host: ScopeCreep\nDestinations: Clanker + FrontDesk\nRuntime: %s\nStatus: required backups completed successfully' \
         "$(duration)"
 )"
 

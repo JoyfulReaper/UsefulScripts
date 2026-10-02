@@ -512,6 +512,9 @@ services:
       EventSources__Sources__17__Name: dn42landing-production
       EventSources__Sources__17__ApiKey: ${DN42LANDING_MISSION_CONTROL_KEY}
 
+      EventSources__Sources__18__Name: devsite-production
+      EventSources__Sources__18__ApiKey: ${DEVSITE_MISSION_CONTROL_KEY}
+
     depends_on:
       - nats
 
@@ -691,6 +694,10 @@ services:
       Agents__Nodes__2__DisplayName: Molasses
       Agents__Nodes__2__BaseUrl: http://10.99.0.10:5194/
 
+      Agents__Nodes__3__NodeId: frontdesk
+      Agents__Nodes__3__DisplayName: FrontDesk
+      Agents__Nodes__3__BaseUrl: http://10.99.0.14:5194/
+
       GitActivityApi__Enabled: "true"
       GitActivityApi__BaseUrl: http://gitactivity:8080/
       GitActivityApi__ApiKey: ${GITACTIVITY_API_KEY}
@@ -709,6 +716,9 @@ services:
 
       GreenCloud__Servers__1__NodeId: scopecreep
       GreenCloud__Servers__1__ServerId: 73a024ef-d2d1-431f-b699-7ca7838c1bc5
+
+      GreenCloud__Servers__2__NodeId: frontdesk
+      GreenCloud__Servers__2__ServerId: ab7db612-4ea3-4bcd-9b16-1dafb596ce5e
 
       Dashboard__Authentication__DatabaseFileName: dashboard-auth.db
       Dashboard__Authentication__BasePath: /app/data
@@ -1196,6 +1206,43 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+
+  happygopher-dn42:
+    image: joyful-stack-happygopher
+    restart: unless-stopped
+
+    environment:
+      DOTNET_ENVIRONMENT: Production
+
+      HappyQotd__Enabled: "true"
+      HappyQotd__BaseUrl: "http://qotd.kgivler.dn42"
+      HappyQotd__TimeoutMilliseconds: "1000"
+
+      Guestbook__Enabled: "true"
+      Guestbook__DataPath: /app/data/guestbook.jsonl
+
+      Gopher__ListenAddress: "::"
+      Gopher__DualMode: "false"
+      Gopher__Port: 70
+      Gopher__PublicHost: "gopher.kgivler.dn42"
+      Gopher__ContentRoot: /app/content
+      GopherPages__PluginDirectory: /app/plugins
+
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: http://gateway:8080
+      MissionControl__ApiKey: ${HAPPYGOPHER_MISSION_CONTROL_KEY}
+      MissionControl__TimeoutMilliseconds: 1000
+
+    volumes:
+      - /var/lib/happygopher/content:/app/content:ro
+      - /var/lib/happygopher/plugins:/app/plugins:ro
+      - /var/lib/happygopher/data:/app/data
+
+    ports:
+      - "[fdf0:e12c:5528::70]:70:70"
+
+    networks:
+      - backend
 
 networks:
   default:

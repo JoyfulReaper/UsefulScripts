@@ -2,7 +2,9 @@ SCOPECREEP
 ==========
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-28
-Updated through controlled iEdon/Kioubit transit and completion of the three-router hbg1 internal mesh on 2026-09-30.
+Updated through controlled iEdon/Kioubit transit, completion of the three-router
+hbg1 internal mesh, and the ScopeCreep/FrontDesk backup migration and restore
+verification on 2026-10-02.
 
 PURPOSE
 -------
@@ -699,6 +701,20 @@ Clanker repository maintenance:
         RandomizedDelaySec=15m
         Persistent=true
 
+FrontDesk repository maintenance:
+    frontdesk-backup-maintenance.timer
+
+    Schedule:
+        Sunday at 08:00
+        RandomizedDelaySec=15m
+        Persistent=true
+        90-day retention/prune/check
+
+Backblaze B2 maintenance:
+    b2-backup-maintenance.timer
+    disabled / no future run scheduled as of 2026-10-02
+    B2 remains broken / under investigation and is not a required destination
+
 Legacy host-managed Beszel updater remains disabled.
 
 ===============================================================================
@@ -716,16 +732,44 @@ Clanker repository maintenance:
     /usr/local/sbin/clanker-backup-maintenance
         -> /home/joyfulreaper/UsefulScripts/VPS/Backup/ScopeCreep/clanker-repo-maintenance.sh
 
+FrontDesk repository maintenance:
+    /usr/local/sbin/frontdesk-backup-maintenance
+        -> /home/joyfulreaper/UsefulScripts/VPS/Backup/ScopeCreep/frontdesk-repo-maintenance.sh
+
 The UsefulScripts checkout is therefore part of operational recovery.
 
 ===============================================================================
 11. BACKUP ARCHITECTURE
 ===============================================================================
 
-ScopeCreep backs itself up to Clanker over the private WireGuard network.
+ScopeCreep backs itself up over the private WireGuard network to two required
+restic destinations.
 
-Destination:
+1. Clanker peer repository:
     rest:http://10.99.0.1:8000/scopecreep/
+
+    tags:
+        scopecreep
+        peer
+
+2. FrontDesk bulk-storage repository:
+    rest:http://10.99.0.14:8000/scopecreep/
+
+    REST user:
+        scopecreep
+
+    tags:
+        scopecreep
+        frontdesk
+
+    repository ID prefix:
+        933c8224
+
+Backblaze B2:
+    previously used as an additional offsite destination
+    currently considered broken / under investigation
+    removed from the required daily path on 2026-10-02
+    maintenance timer disabled
 
 ScopeCreep also hosts Clanker's peer restic repository:
     /var/lib/restic/clanker
@@ -739,6 +783,44 @@ Secret files:
 These are intentionally excluded from the normal peer backup and must be
 preserved out-of-band.
 
+Validated migrated run on 2026-10-02:
+    Clanker snapshot:
+        be0421b7
+
+    FrontDesk snapshot:
+        f53cd6d8
+
+    files:
+        764
+
+    logical size:
+        12.184 MiB
+
+    first FrontDesk addition:
+        12.675 MiB logical
+        5.017 MiB stored
+
+Representative FrontDesk restore test:
+    restored /manifest/host.txt
+    restored /root/opt/dockge/data/dockge.db
+    restored Dockge SQLite database returned:
+        PRAGMA quick_check;
+        ok
+
+FrontDesk repository maintenance:
+    script:
+        /usr/local/sbin/frontdesk-backup-maintenance
+
+    tracked source:
+        VPS/Backup/ScopeCreep/frontdesk-repo-maintenance.sh
+
+    timer:
+        frontdesk-backup-maintenance.timer
+
+    policy:
+        keep every snapshot within the most recent 90 days
+        run unlock, forget --prune, check, and stats separately from daily backup
+
 Important persistent/rebuild-relevant data:
     /var/lib/restic
     /opt/dockge/data
@@ -750,7 +832,7 @@ Important persistent/rebuild-relevant data:
     /etc/nsd
     /etc/systemd/system
 
-The new DN42 configuration is covered by normal /etc backup except for any
+The DN42 configuration is covered by normal /etc backup except for any
 out-of-band secrets excluded by policy.
 
 ===============================================================================
@@ -819,8 +901,10 @@ Suggested high-level rebuild order:
 20. Republish Mission Control Agent and restore its EnvironmentFile.
 21. Restore backup timers and out-of-band backup secrets.
 22. Verify ScopeCreep self-backup to Clanker.
-23. Verify Clanker's repository hosted on ScopeCreep.
-24. Perform representative restore tests.
+23. Verify ScopeCreep self-backup to FrontDesk.
+24. Verify Clanker's repository hosted on ScopeCreep.
+25. Perform representative restore tests.
+26. Leave B2 maintenance disabled unless its viability is deliberately re-evaluated.
 
 ===============================================================================
 14. CURRENT HIGH-LEVEL SERVICE MAP
@@ -891,10 +975,13 @@ ScopeCreep
          +-- dozzle-agent
          +-- beszel-agent
 
-Backup relationship:
+Backup relationships:
 
     ScopeCreep -----------------------> Clanker
       self backup                        rest-server
+
+    ScopeCreep -----------------------> FrontDesk
+      bulk-storage backup                rest-server
 
     Clanker --------------------------> ScopeCreep
       peer backup                        rest-server
@@ -931,7 +1018,8 @@ Backup relationship:
 
 9. Remove the disabled legacy host Beszel deployment after sufficient soak time.
 
-10. Perform a clean restore test from ScopeCreep's backup stored on Clanker.
+10. Periodically repeat representative restores from both required ScopeCreep
+    repositories after major backup or storage changes.
 
 ===============================================================================
 16. SUMMARY
@@ -942,6 +1030,7 @@ ScopeCreep is a real second DN42 edge for AS4242420425.
 It currently provides:
     - peer backup storage for Clanker
     - self-backup to Clanker
+    - encrypted bulk-storage backup to FrontDesk
     - Mission Control Agent
     - Dockge
     - Dozzle agent

@@ -608,7 +608,9 @@ rest-server:
         /var/lib/restic
 
     Purpose:
-        peer restic repository server, including Clanker's peer backup
+        peer restic repository server, including:
+            Clanker's peer backup
+            FrontDesk's recovery-configuration backup
 
 Dockge:
     10.99.0.9:5001
@@ -771,8 +773,16 @@ Backblaze B2:
     removed from the required daily path on 2026-10-02
     maintenance timer disabled
 
-ScopeCreep also hosts Clanker's peer restic repository:
+ScopeCreep also hosts encrypted restic repositories for other systems:
     /var/lib/restic/clanker
+        Clanker's peer backup
+
+    /var/lib/restic/frontdesk
+        FrontDesk recovery-configuration backup
+        repository ID prefix ab8b348b
+        first validated snapshot 77d7a828 on 2026-10-02
+        109.543 MiB logical / 40.284 MiB stored on first run
+        representative restore and byte-for-byte config checks passed
 
 Backup staging:
     /var/lib/vps-backup/staging
@@ -986,6 +996,9 @@ Backup relationships:
     Clanker --------------------------> ScopeCreep
       peer backup                        rest-server
 
+    FrontDesk ------------------------> ScopeCreep
+      recovery-config backup            rest-server
+
 ===============================================================================
 15. INVENTORY GAPS / NEXT ACTIONS
 ===============================================================================
@@ -1029,6 +1042,7 @@ ScopeCreep is a real second DN42 edge for AS4242420425.
 
 It currently provides:
     - peer backup storage for Clanker
+    - recovery-configuration backup storage for FrontDesk
     - self-backup to Clanker
     - encrypted bulk-storage backup to FrontDesk
     - Mission Control Agent

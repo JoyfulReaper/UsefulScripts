@@ -709,25 +709,73 @@ Important limitation:
     FrontDesk's 1 TB storage is in the same VPS/provider account as FrontDesk.
     Data existing only there is NOT independent disaster recovery.
 
-FrontDesk itself does not currently have a documented independent configuration
-backup. A rebuild should not require preserving the bulk repository files on the
-OS disk, but the following small recovery material deserves an independent,
-secure copy or reproducible recovery procedure:
-    /etc/restic-rest-server/users.htpasswd
-    /etc/wireguard/
-    SSH authorized-key/access configuration
-    UFW policy
-    /etc/fstab
-    systemd/service configuration
-    backup-molasses authorized_keys restrictions
-    Mission Control/Beszel configuration and secret material as appropriate
+FrontDesk recovery-configuration backup:
+    implemented 2026-10-02
+    encrypted restic destination:
+        rest:http://10.99.0.9:8000/frontdesk/
+    destination host:
+        ScopeCreep
+    repository ID prefix:
+        ab8b348b
+    restic client:
+        0.18.0
 
-Do not put secret-bearing copies of those files in Git.
+    purpose:
+        protect the small configuration/identity set needed to rebuild
+        FrontDesk itself without recursively copying its bulk backup holdings
 
-The restic CLI was not installed on FrontDesk during the 2026-10-02 audit.
-That is not required for its current rest-server role because repository
-maintenance is initiated by the clients. Install restic locally only if a
-specific FrontDesk-side recovery/verification workflow needs it.
+    ordinary scope:
+        broad /etc except /etc/vps-backup
+        administrator / backup-receiver SSH state
+        Mission Control and Beszel state/install paths
+        /usr/local/bin
+        /usr/local/sbin
+        generated recovery manifest
+
+    intentionally excluded:
+        /etc/vps-backup
+        /srv/storage/backups/restic
+        /srv/storage/backups/vms
+
+    first validated snapshot:
+        77d7a828
+        773 files
+        109.543 MiB logical
+        40.284 MiB stored
+        12 second run
+
+    restore verification:
+        restored /manifest/host.txt
+        restored /root/etc/fstab
+        restored /root/etc/restic-rest-server/users.htpasswd
+        restored /root/etc/wireguard/wg0.conf
+
+        byte-for-byte comparisons against the live files:
+            fstab: OK
+            rest-server auth: OK
+            WireGuard config: OK
+
+        temporary restore workspace removed afterward
+
+    tracked tooling:
+        VPS/Backup/FrontDesk/backup.sh
+        VPS/Backup/FrontDesk/scopecreep-restore.md
+
+    schedule:
+        daily via vps-backup.timer
+
+    repository maintenance:
+        separate from daily backups
+        tracked by VPS/Backup/FrontDesk/scopecreep-repo-maintenance.sh
+        90-day retention
+        weekly Sunday around 10:00 with randomized delay
+        unlock + forget/prune + check + raw-data stats
+
+The repository password and ScopeCreep REST credentials live under
+/etc/vps-backup on FrontDesk and are deliberately excluded from the repository
+they unlock. Preserve those credentials independently out-of-band.
+
+Do not put secret-bearing recovery material in Git.
 
 No recent storage I/O/ext4 errors were found in the audit, and systemd reported
 zero failed units.
@@ -870,8 +918,6 @@ rotated immediately.
 
 Not commissioning blockers:
 - Mission Control disabled-publication status wart;
-- independent secure/reproducible backup of FrontDesk's own small recovery
-  configuration;
 - periodic verification of fleet backup age/retention and selected restores;
 - optional tertiary recent-copy mirror to Molasses after the primary design has
   had time to settle;

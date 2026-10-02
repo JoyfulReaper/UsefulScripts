@@ -664,6 +664,28 @@ Current client backup relationships:
     Molasses    -> FrontDesk restic repository
     RyzenShine  -> FrontDesk restic repository for selected Hyper-V VMs
 
+RyzenShine Hyper-V backup policy:
+    Jumpbox:
+        weekly
+        keep last 6
+        full restic restore/import/isolated boot verified
+
+    ArchLinux:
+        every 2 weeks
+        keep last 4
+        first scheduled snapshot 53703a09 verified 2026-10-02
+        ntfy success notification verified
+
+    FreeBSD:
+        every 4 weeks
+        keep last 3
+        snapshot creation verified
+
+    NoiseMaker:
+        every 13 weeks
+        keep last 4
+        scheduled restic backup verified
+
 Representative restore verification completed elsewhere:
     Clanker:
         FrontDesk restore tested, including SQLite PRAGMA quick_check

@@ -115,7 +115,7 @@ For a full restore test:
 7. Verify the guest and shut it down.
 8. Remove the restore-test VM and files when finished.
 
-## Verified first scheduled run
+## Verified scheduled runs
 
 The scheduled task was started manually through Windows Task Scheduler on
 2026-10-02 and completed successfully:
@@ -123,8 +123,17 @@ The scheduled task was started manually through Windows Task Scheduler on
 ```text
 Task: ArchLinux Biweekly Backup
 LastTaskResult: 0
-Snapshot: 53703a09
+First snapshot: 53703a09
 Tags: hyperv,ArchLinux
+ntfy success notification: received
+```
+
+A second manual run was made after ArchLinux configuration changes that were
+worth preserving:
+
+```text
+LastTaskResult: 0
+Post-config-change snapshot: 9354bf3c
 ntfy success notification: received
 ```
 
@@ -137,14 +146,15 @@ retention, clean up staging, and publish the success notification.
 As of 2026-10-02:
 
 ```text
-VM registered:              VERIFIED
-VM running normally:        VERIFIED
-VHDX path:                  VERIFIED
-VHDX type/size:             VERIFIED
-VHDX ParentPath blank:      VERIFIED
-Scheduled task installed:   VERIFIED
-Scheduled task run:         VERIFIED
-First restic snapshot:      53703a09
-ntfy notification:          VERIFIED
-Full isolated boot restore: NOT YET TESTED
+VM registered:                    VERIFIED
+VM running normally:              VERIFIED
+VHDX path:                        VERIFIED
+VHDX type/size:                   VERIFIED
+VHDX ParentPath blank:            VERIFIED
+Scheduled task installed:         VERIFIED
+Scheduled task run:               VERIFIED
+First restic snapshot:            53703a09
+Post-config-change snapshot:      9354bf3c
+ntfy notification:                VERIFIED
+Full isolated boot restore:       NOT YET TESTED
 ```

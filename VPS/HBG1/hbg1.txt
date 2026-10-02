@@ -2,6 +2,7 @@ HBG1
 ====
 Infrastructure / Recovery / DN42 Router Overview
 Snapshot date: 2026-09-30
+Updated through direct HBG1 -> FrontDesk VM-backup verification on 2026-10-02.
 
 PURPOSE
 -------
@@ -454,7 +455,65 @@ on monitoring, external peering experiments, BGP community metadata, and
 periodic failover re-testing after major routing-policy changes.
 
 ===============================================================================
-12. RECOVERY ORDER
+12. BACKUP / RECOVERY COPY
+===============================================================================
+
+HBG1 is backed up separately from the Molasses host restic backup.
+
+Source:
+    running libvirt/QEMU VM on Molasses
+
+Backup host:
+    Molasses
+
+Timer:
+    hbg1-backup.timer
+    daily
+
+Destination:
+    FrontDesk
+    /srv/storage/backups/vms/hbg1
+
+Transport:
+    live libvirt backup
+    rsync/SSH over the private management network
+
+FrontDesk receiving account:
+    backup-molasses
+
+Observed authorized-key restriction on FrontDesk 2026-10-02:
+    source restricted to 10.99.0.10
+    OpenSSH restrict option enabled
+
+Retention:
+    14 dated generations
+
+FrontDesk generations visible during the 2026-10-02 audit:
+    2026-09-30
+    2026-10-01
+    2026-10-02
+
+The 2026-10-02 scheduled backup was validated end to end through storage:
+    live libvirt backup completed
+    local qemu-img integrity check passed
+    transfer to FrontDesk completed
+    qcow2 and domain XML hashes verified remotely
+    FrontDesk qemu-img integrity check passed
+    retention ran
+    destination:
+        /srv/storage/backups/vms/hbg1/2026-10-02
+
+This proves the VM image reached FrontDesk intact. A full disaster-recovery boot
+from a copied-back HBG1 image has not been performed. Given HBG1's rebuildable
+lab/router role, that deeper test is optional rather than a current blocker.
+
+The backup must remain independent of the Molasses host restic staging policy:
+HBG1 is a VM image backup, while Molasses's ordinary restic job protects selected
+host/application configuration and deliberately excludes bulk/regeneratable
+state.
+
+===============================================================================
+13. RECOVERY ORDER
 ===============================================================================
 
 Suggested rebuild:
@@ -478,7 +537,7 @@ Suggested rebuild:
 18. Restore any future external peers one at a time.
 
 ===============================================================================
-13. KNOWN NEXT ACTIONS
+14. KNOWN NEXT ACTIONS
 ===============================================================================
 
 1. Run and record `sudo sockstat -46l`; decide whether PF should restrict any

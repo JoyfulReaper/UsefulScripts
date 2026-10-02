@@ -21,4 +21,4 @@ if (-not (Test-Path -LiteralPath $GenericScript -PathType Leaf))
     -Repository 'rest:http://10.99.0.14:8000/ryzenshine/' `
     -StagingRoot 'S:\HyperV-Backup-Staging' `
     -LimitUploadKiB 10240 `
-    -KeepLast 4
+    -KeepLast 6

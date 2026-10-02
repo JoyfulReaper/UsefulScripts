@@ -2,8 +2,9 @@ MOLASSES
 ========
 Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-09-27
-Updated through hbg1 KVM/libvirt deployment, routed residential IPv6, and the
-new Clanker <-> hbg1 DN42 core on 2026-09-30.
+Updated through hbg1 KVM/libvirt deployment, routed residential IPv6, the
+three-router DN42 core, and the Molasses/FrontDesk backup migration and restore
+verification on 2026-10-02.
 
 PURPOSE
 -------
@@ -545,11 +546,21 @@ vps-backup.timer
     RandomizedDelaySec=15m
     Persistent=true
 
-b2-backup-maintenance.timer
+frontdesk-backup-maintenance.timer
     weekly
-    Sunday 08:45 local
+    Sunday 09:00 local
     RandomizedDelaySec=15m
     Persistent=true
+    90-day FrontDesk restic retention/prune/check
+
+hbg1-backup.timer
+    daily
+    backs up the hbg1 libvirt VM directly to FrontDesk
+
+b2-backup-maintenance.timer
+    disabled
+    no future run scheduled as of 2026-10-02
+    B2 remains broken / under investigation and is not a required destination
 
 ===============================================================================
 11. PERSISTENT APPLICATION DATA
@@ -585,31 +596,130 @@ Other important persistent state includes:
 12. BACKUP ARCHITECTURE
 ===============================================================================
 
-Molasses backup is implemented.
+Molasses backup is implemented and was migrated/re-audited on 2026-10-02.
 
-Primary destinations:
+Required destinations:
 
 1. Clanker peer repository
     rest:http://10.99.0.1:8000/molasses/
 
-2. Backblaze B2
-    independent offsite restic repository
+    tags:
+        molasses
+        peer
+
+2. FrontDesk bulk-storage repository
+    rest:http://10.99.0.14:8000/molasses/
+
+    REST user:
+        molasses
+
+    tags:
+        molasses
+        frontdesk
+
+    repository ID prefix:
+        531a6d87
+
+Backblaze B2:
+    previously used as an additional offsite repository
+    currently considered broken / under investigation for this environment
+    intentionally removed from the required daily backup path
+    B2 maintenance timer disabled as of 2026-10-02
 
 Installed entry point:
     /usr/local/sbin/vps-backup
+
+Tracked script:
+    /home/joyfulreaper/UsefulScripts/VPS/Backup/Molasses/backup.sh
 
 Backup staging:
     /var/lib/vps-backup/staging
 
 Backup secret files:
     /etc/vps-backup/
+        peer.env
+        peer-repository-password
+        frontdesk.env
+        frontdesk-repository-password
+        ntfy.env
 
 These are intentionally not committed publicly and require out-of-band
-preservation.
+preservation. The FrontDesk repository encryption password must remain available
+independently of Molasses; losing it would make that repository unrecoverable.
 
 The backup stages broad /etc and /opt/stacks content with deliberate exclusions,
 creates consistent SQLite snapshots, generates a recovery manifest, and sends
-the same staged recovery set to both Clanker and B2.
+the same staged recovery set to both Clanker and FrontDesk.
+
+The 2026-10-02 migrated run completed successfully:
+    Clanker snapshot:
+        308b84bd
+
+    FrontDesk snapshot:
+        c2ff6533
+
+    files:
+        1005
+
+    logical size:
+        50.740 MiB
+
+    initial FrontDesk repository addition:
+        51.002 MiB logical
+        20.863 MiB stored
+
+    runtime:
+        20 seconds
+
+Representative FrontDesk restore test 2026-10-02:
+    restored /manifest/host.txt
+    restored /root/opt/stacks/uptime-kuma/data/kuma.db
+    manifest identified Molasses / Debian 13 (trixie)
+    restored Uptime Kuma database returned:
+        PRAGMA quick_check;
+        ok
+
+FrontDesk repository maintenance:
+    /usr/local/sbin/frontdesk-backup-maintenance
+
+    tracked source:
+        VPS/Backup/Molasses/frontdesk-repo-maintenance.sh
+
+    timer:
+        frontdesk-backup-maintenance.timer
+
+    policy:
+        keep every snapshot within the most recent 90 days
+        run unlock, forget --prune, check, and stats separately from daily backup
+
+HBG1 VM backup is separate from the Molasses host restic job:
+    source:
+        live libvirt VM on Molasses
+
+    destination:
+        FrontDesk /srv/storage/backups/vms/hbg1
+
+    transport:
+        rsync/SSH using the restricted FrontDesk backup-molasses account
+
+    timer:
+        hbg1-backup.timer
+        daily
+
+    retention:
+        14 dated generations
+
+    2026-10-02 verification:
+        live libvirt backup completed
+        local qemu-img check passed
+        transfer to FrontDesk completed
+        SHA-256 verification passed
+        FrontDesk qemu-img check passed
+
+The old Molasses HDD may later hold a small tertiary recent-copy mirror from
+FrontDesk. That idea is intentionally non-authoritative and must not make
+primary backup success depend on the old disk. Scrutiny already monitors local
+drive SMART health.
 
 ===============================================================================
 13. BACKUP PRIORITY MODEL
@@ -674,9 +784,11 @@ Suggested high-level rebuild order:
 17. Recreate fresh Matrix PostgreSQL under current policy.
 18. Restore selected SQLite/application state.
 19. Restore backup scripts and secret files out-of-band.
-20. Verify Clanker peer repository and B2.
+20. Verify Clanker peer repository and FrontDesk repository.
 21. Perform representative restore tests.
-22. Enable backup/maintenance timers.
+22. Verify the separate hbg1 -> FrontDesk VM backup path.
+23. Enable backup/maintenance timers.
+24. Leave B2 maintenance disabled unless the B2 investigation is deliberately reopened.
 
 ===============================================================================
 15. CURRENT HIGH-LEVEL SERVICE MAP
@@ -727,9 +839,13 @@ Home LAN / Internet
         |     Dockge
         |
         +-- Backup client
+        |     |
+        |     +-- Clanker rest-server
+        |     +-- FrontDesk rest-server
+        |
+        +-- hbg1 VM backup
               |
-              +-- Clanker rest-server
-              +-- Backblaze B2
+              +-- FrontDesk /srv/storage/backups/vms/hbg1
 
 ===============================================================================
 16. INVENTORY GAPS / NEXT ACTIONS
@@ -765,7 +881,8 @@ Home LAN / Internet
        Unbound directly on :5335
        normal Pi-hole path on :53
 
-9. Perform representative restore tests from both Clanker and B2.
+9. Periodically repeat representative restore tests from Clanker and FrontDesk
+   after major backup-format or storage changes.
 
 10. Keep Docker address pools outside DN42 space.
 
@@ -796,7 +913,8 @@ Its responsibilities include:
     - Dozzle agent
     - Beszel agent
     - encrypted peer backup to Clanker
-    - encrypted offsite backup to Backblaze B2
+    - encrypted bulk-storage backup to FrontDesk
+    - direct hbg1 VM backup to FrontDesk
 
 DN42-specific current state:
     - Molasses uses dedicated .59 / ::59 client identities.
@@ -809,7 +927,8 @@ DN42-specific current state:
 
 The current recovery model remains:
     irreplaceable identity/secrets
-        -> encrypted peer copy + independent encrypted offsite copy
+        -> encrypted Clanker + FrontDesk copies where included
+        -> repository credentials independently preserved out-of-band
 
     small useful application state
         -> consistent selective snapshots

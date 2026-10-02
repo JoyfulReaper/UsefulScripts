@@ -2,6 +2,7 @@ FRONTDESK
 =========
 Production / Storage VPS Inventory and Recovery Notes
 Initial commissioning: 2026-09-30
+Updated through FrontDesk backup-storage and recovery audit on 2026-10-02.
 
 PURPOSE
 -------
@@ -596,25 +597,145 @@ Do not infer public exposure from ss(8) alone; firewall policy is part of the de
 15. BACKUPS
 ===============================================================================
 
-Local backup/storage target:
+FrontDesk is now the main bulk-storage backup target for the current fleet.
+
+Storage root:
     /srv/storage/backups
+
+Audit 2026-10-02:
+    /srv/storage filesystem:
+        ~1007 GiB total
+        ~50 GiB used
+        ~948 GiB available
+        5% used
+        inode use ~1%
+
+    backup usage:
+        /srv/storage/backups/restic   ~17 GiB
+        /srv/storage/backups/vms      ~34 GiB
+
+Restic REST server:
+    package/service:
+        restic-rest-server 0.13.0
+        restic-rest-server.service
+        enabled and active
+
+    listener:
+        10.99.0.14:8000
+        WireGuard management address only
+
+    repository root:
+        /srv/storage/backups/restic
+
+    authentication:
+        /etc/restic-rest-server/users.htpasswd
+        authentication enabled
+        --private-repos enabled
+
+    service identity:
+        restic-rest-server:restic-rest-server
+
+    repository root permissions:
+        drwxr-x---
+
+    per-client repository directories:
+        clanker
+        molasses
+        ryzenshine
+        scopecreep
+
+    each observed client repository directory:
+        mode 0700
+        owner restic-rest-server:restic-rest-server
+
+FrontDesk firewall policy for the REST service:
+    explicit TCP/8000 allow rules on wg0, before the catch-all deny, for:
+        RyzenShine  10.99.0.2
+        Clanker     10.99.0.1
+        ScopeCreep  10.99.0.9
+        Molasses    10.99.0.10
+
+    then:
+        deny TCP/8000 from other 10.99.0.0/24 WireGuard peers
+
+Current client backup relationships:
+    Clanker     -> FrontDesk restic repository
+    ScopeCreep  -> FrontDesk restic repository
+    Molasses    -> FrontDesk restic repository
+    RyzenShine  -> FrontDesk restic repository for selected Hyper-V VMs
+
+Representative restore verification completed elsewhere:
+    Clanker:
+        FrontDesk restore tested, including SQLite PRAGMA quick_check
+
+    ScopeCreep:
+        FrontDesk restore tested, including SQLite PRAGMA quick_check
+
+    Molasses:
+        FrontDesk snapshot c2ff6533 restored successfully on 2026-10-02
+        /manifest/host.txt restored
+        Uptime Kuma SQLite database restored
+        PRAGMA quick_check returned ok
+
+HBG1 VM backups:
+    source:
+        Molasses/libvirt
+
+    transport:
+        live libvirt backup -> rsync/SSH -> FrontDesk
+
+    destination:
+        /srv/storage/backups/vms/hbg1
+
+    dedicated receiving account:
+        backup-molasses
+
+    authorized key restriction observed 2026-10-02:
+        source restricted to 10.99.0.10
+        OpenSSH restrict option enabled
+
+    dated generations present during audit:
+        2026-09-30
+        2026-10-01
+        2026-10-02
+
+    2026-10-02 generation:
+        source qemu-img check passed
+        transfer completed
+        SHA-256 verification passed remotely
+        FrontDesk qemu-img check passed
 
 Important limitation:
     FrontDesk's 1 TB storage is in the same VPS/provider account as FrontDesk.
     Data existing only there is NOT independent disaster recovery.
 
-Tracked work includes:
-- audit the existing fleet backup scripts/jobs;
-- audit all VM backup coverage;
-- ensure every VM that should be protected backs up to FrontDesk's 1 TB
-  /srv/storage volume;
-- document VM source host, backup method/schedule, destination, retention and
-  exclusions;
-- avoid circular-only backup paths;
-- perform at least one restore/verification test;
-- establish an independent copy for important FrontDesk data.
+FrontDesk itself does not currently have a documented independent configuration
+backup. A rebuild should not require preserving the bulk repository files on the
+OS disk, but the following small recovery material deserves an independent,
+secure copy or reproducible recovery procedure:
+    /etc/restic-rest-server/users.htpasswd
+    /etc/wireguard/
+    SSH authorized-key/access configuration
+    UFW policy
+    /etc/fstab
+    systemd/service configuration
+    backup-molasses authorized_keys restrictions
+    Mission Control/Beszel configuration and secret material as appropriate
 
-Until that audit is finished, do not assume every VM is protected.
+Do not put secret-bearing copies of those files in Git.
+
+The restic CLI was not installed on FrontDesk during the 2026-10-02 audit.
+That is not required for its current rest-server role because repository
+maintenance is initiated by the clients. Install restic locally only if a
+specific FrontDesk-side recovery/verification workflow needs it.
+
+No recent storage I/O/ext4 errors were found in the audit, and systemd reported
+zero failed units.
+
+A future tertiary copy of selected recent FrontDesk backups to Molasses has been
+recorded as an idea. It must remain non-authoritative: never move/delete the
+FrontDesk source as part of that copy job, and do not make primary backup success
+depend on the old Molasses HDD.
 
 ===============================================================================
 16. REBOOT ACCEPTANCE TEST
@@ -713,6 +834,15 @@ Beszel Agent:
 Storage:
     /srv/storage/
 
+Restic REST server:
+    /etc/restic-rest-server/
+    /etc/restic-rest-server/users.htpasswd
+    /srv/storage/backups/restic/
+
+HBG1 backup receiver:
+    /home/backup-molasses/.ssh/authorized_keys
+    /srv/storage/backups/vms/hbg1/
+
 ===============================================================================
 19. SECURITY / SECRET NOTES
 ===============================================================================
@@ -740,8 +870,11 @@ rotated immediately.
 
 Not commissioning blockers:
 - Mission Control disabled-publication status wart;
-- independent backup coverage and restore testing;
-- VM backup audit into /srv/storage;
+- independent secure/reproducible backup of FrontDesk's own small recovery
+  configuration;
+- periodic verification of fleet backup age/retention and selected restores;
+- optional tertiary recent-copy mirror to Molasses after the primary design has
+  had time to settle;
 - decision on encryption for selected personal data;
 - possible WSIWOT migration;
 - possible future clearnet web/app workloads;

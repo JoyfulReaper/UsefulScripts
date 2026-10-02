@@ -70,7 +70,7 @@ try
         -User $userId `
         -Password $plainPassword `
         -RunLevel Highest `
-        -Description 'Live Hyper-V restic backup of ArchLinux to FrontDesk every two weeks; keeps the latest 4 snapshots.' `
+        -Description 'Live Hyper-V restic backup of ArchLinux to FrontDesk every two weeks; keeps the latest 6 snapshots.' `
         -Force `
         -ErrorAction Stop |
         Out-Null

@@ -672,7 +672,7 @@ RyzenShine Hyper-V backup policy:
 
     ArchLinux:
         every 2 weeks
-        keep last 4
+        keep last 6
         first scheduled snapshot 53703a09 verified 2026-10-02
         ntfy success notification verified
 

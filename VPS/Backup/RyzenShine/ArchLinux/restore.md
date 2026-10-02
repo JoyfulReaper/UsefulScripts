@@ -10,7 +10,7 @@ VM name: ArchLinux
 Backup type: live Hyper-V export into restic
 Repository: rest:http://10.99.0.14:8000/ryzenshine/
 Frequency: every 2 weeks
-Retention: keep last 4 ArchLinux snapshots
+Retention: keep last 6 ArchLinux snapshots
 Upload limit: 10240 KiB/s
 Notifications: ntfy success/failure
 ```

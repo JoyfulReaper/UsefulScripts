@@ -1,10 +1,10 @@
 MOLASSES
 ========
 Infrastructure / Recovery / Service Overview
-Snapshot date: 2026-09-27
+Snapshot date: 2026-10-02
 Updated through hbg1 KVM/libvirt deployment, routed residential IPv6, the
-three-router DN42 core, and the Molasses/FrontDesk backup migration and restore
-verification on 2026-10-02.
+three-router DN42 core, the Molasses/FrontDesk backup migration and restore
+verification, and the hbg1 routed-IPv6 persistence/firewall repair on 2026-10-02.
 
 PURPOSE
 -------
@@ -181,23 +181,43 @@ hbg1 virtualization / routed residential IPv6:
 
     Persistent Linux routing sysctls:
         net.ipv6.conf.all.forwarding = 1
-        net.ipv6.conf.wifi0.accept_ra = 2
-        net.ipv6.conf.wifi0.proxy_ndp = 0
+
+    Upstream IPv6 / router advertisements:
+        dhcpcd manages wifi0 IPv4/IPv6 and the upstream RA/default route.
+        NetworkManager reports wifi0 unmanaged.
+        net.ipv6.conf.wifi0.accept_ra is intentionally left at 0; the previous
+        interface-specific sysctl was removed because wifi0 does not exist yet
+        when systemd-sysctl runs and dhcpcd already manages the RA route.
+        proxy NDP is not used for hbg1's genuinely routed /64.
 
     Persistent bridge-address service:
         /etc/systemd/system/hbg1-bridge-ipv6.service
 
+        The unit waits for virbr-hbg1, explicitly enables IPv6 on the bridge
+        with net.ipv6.conf.virbr-hbg1.disable_ipv6=0, then installs
+        2600:4040:f02d:3201::1/64. This was fixed on 2026-10-02 after a reboot
+        exposed that libvirt creates the IPv4-only NAT bridge with IPv6 disabled.
+
     Firewall:
         Molasses UFW default routed policy remains deny.
-        A narrow routed IPv6 rule permits hbg1's WireGuard core UDP/51823
-        toward Clanker's native public IPv6 address.
+        General routed IPv6 outbound is allowed from 2600:4040:f02d:3201::/64
+        on virbr-hbg1 to wifi0.
+        Explicit inbound routed WireGuard rules allow:
+            Clanker public IPv6 -> hbg1 2600:4040:f02d:3201::13 UDP/18461
+            ScopeCreep public IPv6 -> hbg1 2600:4040:f02d:3201::13 UDP/63206
+        An older explicit hbg1 -> Clanker UDP/51823 rule is still present and may
+        be redundant with the general routed-/64 outbound rule; audit before
+        removing it.
 
     DN42:
         hbg1 is a separate BIRD router, not a BGP process on Molasses.
-        hbg1 reaches Clanker over its own native-IPv6 WireGuard core.
+        hbg1 reaches Clanker and ScopeCreep over native-IPv6 WireGuard cores.
         hbg1 router identities:
             172.20.220.53/32
             fdf0:e12c:5528::53/128
+
+        After the 2026-10-02 bridge recovery, hbg1 native IPv6, both WireGuard
+        handshakes, and both iBGP sessions returned to healthy/Established state.
 
 ===============================================================================
 3. FIREWALL / ROUTING
@@ -222,6 +242,17 @@ Important private-WireGuard services include:
     DNS
     Beszel agent
     Dockge / Dozzle utility endpoints
+
+hbg1 routed IPv6 policy:
+    - outbound routed IPv6 from 2600:4040:f02d:3201::/64 is allowed from
+      virbr-hbg1 to wifi0
+    - inbound Clanker WireGuard is limited to the Clanker public IPv6 source and
+      hbg1 UDP/18461
+    - inbound ScopeCreep WireGuard is limited to the ScopeCreep public IPv6
+      source and hbg1 UDP/63206
+    - related/established return traffic is accepted by UFW/conntrack
+    - the older explicit hbg1 -> Clanker UDP/51823 route rule remains pending a
+      cleanup audit because the general outbound /64 rule appears to cover it
 
 Docker's packet-filter integration must be considered separately from simple UFW
 status when auditing exposure.
@@ -451,6 +482,7 @@ Important host services include:
     containerd.service
     cron.service
     docker.service
+    hbg1-bridge-ipv6.service
     NetworkManager.service
     pihole-FTL.service
     smartmontools.service
@@ -459,6 +491,14 @@ Important host services include:
     wpa_supplicant.service
 
 WireGuard wg0 is operational and carries DN42 traffic to/from Clanker.
+
+hbg1-bridge-ipv6.service is enabled and is required for routed residential IPv6
+to hbg1. It waits for virbr-hbg1, enables IPv6 on the bridge, and installs the
+2600:4040:f02d:3201::1/64 gateway address.
+
+A temporary molasses-wifi-ipv6.service was created while diagnosing RA behavior,
+but was disabled after verifying dhcpcd already manages wifi0's upstream IPv6
+route. The unit file may be removed after one deliberate reboot verification.
 
 ===============================================================================
 9. PI-HOLE / UNBOUND
@@ -767,28 +807,31 @@ Suggested high-level rebuild order:
        fdf0:e12c:5528::59/128
 7. Verify routes through Clanker.
 8. Restore UFW policy.
-9. Install Docker / Compose.
-10. Restore Compose/configuration.
-11. Restore Pi-hole and Unbound.
-12. Restore DN42 forward/reverse forwarding config.
-13. Verify:
+9. Restore IPv6 forwarding and hbg1-bridge-ipv6.service; verify virbr-hbg1 has
+   IPv6 enabled and 2600:4040:f02d:3201::1/64 before relying on hbg1 public IPv6.
+10. Install Docker / Compose.
+11. Restore Compose/configuration.
+12. Restore Pi-hole and Unbound.
+13. Restore DN42 forward/reverse forwarding config.
+14. Verify:
        normal DNS
        .dn42 forward DNS
        DN42 IPv4 reverse forwarding
        DN42 IPv6 reverse forwarding
-14. Verify direct authoritative reachability to:
+15. Verify direct authoritative reachability to:
        ns1 .50 / ::50
        ns2 .51 / ::51
-15. Restore Cloudflare Tunnel.
-16. Restore minimum Matrix identity/configuration.
-17. Recreate fresh Matrix PostgreSQL under current policy.
-18. Restore selected SQLite/application state.
-19. Restore backup scripts and secret files out-of-band.
-20. Verify Clanker peer repository and FrontDesk repository.
-21. Perform representative restore tests.
-22. Verify the separate hbg1 -> FrontDesk VM backup path.
-23. Enable backup/maintenance timers.
-24. Leave B2 maintenance disabled unless the B2 investigation is deliberately reopened.
+16. Restore Cloudflare Tunnel.
+17. Restore minimum Matrix identity/configuration.
+18. Recreate fresh Matrix PostgreSQL under current policy.
+19. Restore selected SQLite/application state.
+20. Restore backup scripts and secret files out-of-band.
+21. Verify Clanker peer repository and FrontDesk repository.
+22. Perform representative restore tests.
+23. Verify the separate hbg1 -> FrontDesk VM backup path.
+24. Verify hbg1 native IPv6, both core WireGuard tunnels, and both iBGP sessions.
+25. Enable backup/maintenance timers.
+26. Leave B2 maintenance disabled unless the B2 investigation is deliberately reopened.
 
 ===============================================================================
 15. CURRENT HIGH-LEVEL SERVICE MAP
@@ -826,6 +869,17 @@ Home LAN / Internet
         |                     +-- ScopeCreep
         |                          router .52 / ::52
         |                          ns2    .51 / ::51
+        |
+        +-- virbr-hbg1
+        |     192.168.130.1
+        |     2600:4040:f02d:3201::1
+        |        |
+        |        +-- hbg1 FreeBSD residential POP
+        |              192.168.130.2
+        |              2600:4040:f02d:3201::13
+        |              |
+        |              +-- native-IPv6 WG/iBGP -> Clanker
+        |              +-- native-IPv6 WG/iBGP -> ScopeCreep
         |
         +-- Docker
         |     Matrix
@@ -888,6 +942,20 @@ Home LAN / Internet
 
 11. Keep this dossier synchronized as DN42 addressing/DNS/topology changes.
 
+12. Audit and harden the hbg1 UFW forwarding policy: verify both narrow inbound
+    WireGuard rules, verify conntrack/return behavior, and remove the older
+    hbg1 -> Clanker UDP/51823-specific rule only if live testing confirms the
+    general routed-/64 outbound rule makes it redundant.
+
+13. Perform one deliberate reboot/persistence verification after the 2026-10-02
+    repair: confirm hbg1-bridge-ipv6.service succeeds, virbr-hbg1 has IPv6
+    enabled and 2600:4040:f02d:3201::1/64, hbg1 has working public IPv6, both
+    WireGuard handshakes recover, and both BIRD core sessions are Established.
+
+14. After that reboot verification, remove the disabled temporary
+    /etc/systemd/system/molasses-wifi-ipv6.service if it is still unnecessary;
+    dhcpcd is the intended manager of wifi0 upstream IPv6/RA state.
+
 ===============================================================================
 17. SUMMARY
 ===============================================================================
@@ -901,6 +969,7 @@ Its responsibilities include:
     - DN42 reverse-DNS forwarding
     - DN42 client connectivity through Clanker
     - direct testing of ns1 and ns2
+    - KVM/libvirt hosting and routed residential IPv6 gateway for hbg1
     - Matrix Synapse + PostgreSQL
     - Cloudflare Tunnel
     - WireGuard
@@ -921,6 +990,8 @@ DN42-specific current state:
     - Clanker supplies routing.
     - Both Clanker ns1 and ScopeCreep ns2 are directly reachable from Molasses
       over IPv4 and IPv6.
+    - hbg1 has native residential IPv6 routed through Molasses and native-IPv6
+      WireGuard/iBGP cores to both Clanker and ScopeCreep.
     - Direct authoritative PTR queries now succeed for Clanker's router identity.
     - Ordinary recursive PTR discovery is still waiting on registry reverse
       delegation to become visible.

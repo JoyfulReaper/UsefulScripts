@@ -1,8 +1,9 @@
 HBG1
 ====
 Infrastructure / Recovery / DN42 Router Overview
-Snapshot date: 2026-09-30
-Updated through direct HBG1 -> FrontDesk VM-backup verification on 2026-10-02.
+Snapshot date: 2026-10-02
+Updated through routed-IPv6 reboot verification, fixed core WireGuard listen
+ports, and Verizon/Fios IPv6 ingress testing on 2026-10-02.
 
 PURPOSE
 -------
@@ -87,6 +88,29 @@ Verizon router static route:
     2600:4040:f02d:3201::/64
         via 2600:4040:f02d:3200::5
 
+Upstream Verizon/Fios firewall behavior verified 2026-10-02:
+    - outbound IPv6 from hbg1 works through the routed /64
+    - return traffic for established flows works normally
+    - unsolicited inbound IPv6 to 2600:4040:f02d:3201::13 was tested from
+      Clanker's public IPv6 and did not arrive on Molasses wifi0
+    - this proves the Verizon/Fios firewall drops that unsolicited traffic
+      before Molasses can route or filter it
+    - the Fios IPv6 pinhole UI requires a directly known/MAC-associated internal
+      host and cannot directly express a pinhole to hbg1 on the downstream
+      routed 2600:4040:f02d:3201::/64
+
+Current consequence:
+    hbg1's internal core WireGuard tunnels are intentionally initiated by hbg1
+    and use PersistentKeepalive = 25. They do not require unsolicited inbound
+    Internet reachability to hbg1 to remain healthy.
+
+Existing Fios pinhole note:
+    A Clanker -> Molasses UDP/51824 pinhole exists in the Fios router.
+    Molasses wg0 currently listens on UDP/55435, has no persistent ListenPort,
+    nothing local was found listening on UDP/51824, and no Molasses config
+    reference to 51824 was found. Treat that pinhole as unknown/stale until it is
+    deliberately identified or removed; hbg1 does not depend on it.
+
 IMPORTANT:
     This is residential ISP addressing. Treat the delegated prefix as capable
     of changing in the future. Do not publish the raw residential endpoint as
@@ -161,11 +185,18 @@ Clanker:
     192.168.252.5/30
     fd42:42:42:252::5/126
 
+Clanker public IPv6 endpoint:
+    2607:f2d8:8416:10c1::bad:1dea
+
 Clanker WireGuard UDP:
     51823
 
+hbg1 fixed WireGuard listen port:
+    51825
+
 Persistent config:
     /usr/local/etc/wireguard/wg-dn42-core.conf
+    ListenPort = 51825
 
 ScopeCreep core
 ---------------
@@ -184,8 +215,12 @@ ScopeCreep:
 ScopeCreep WireGuard UDP:
     51824
 
+hbg1 fixed WireGuard listen port:
+    51826
+
 Persistent config:
     /usr/local/etc/wireguard/wg-dn42-sc.conf
+    ListenPort = 51826
 
 ScopeCreep public IPv6 endpoint used as the underlay:
     2607:9000:700:1063:b1ee:d:c0ff:ee
@@ -195,6 +230,13 @@ Both core tunnels:
     native residential IPv6 underlay
     BIRD owns DN42 route selection
     hbg1 initiates the WireGuard tunnel
+    PersistentKeepalive = 25
+
+The fixed hbg1 listen ports were added on 2026-10-02 after a Molasses/hbg1 reboot
+showed that omitting ListenPort caused WireGuard to choose new ephemeral ports on
+each start. Live endpoints were verified afterward:
+    Clanker sees hbg1 at [2600:4040:f02d:3201::13]:51825
+    ScopeCreep sees hbg1 at [2600:4040:f02d:3201::13]:51826
 
 The three-router internal topology is now a full mesh:
 
@@ -344,6 +386,17 @@ Effect:
     other traffic:
         currently unchanged/allowed
 
+Molasses forwarding policy for hbg1:
+    - routed default policy is deny
+    - outbound IPv6 from 2600:4040:f02d:3201::/64 on virbr-hbg1 -> wifi0 is
+      explicitly allowed
+    - inbound Clanker -> hbg1 UDP/51825 is explicitly allowed
+    - inbound ScopeCreep -> hbg1 UDP/51826 is explicitly allowed
+    - related/established return traffic is handled by conntrack
+    - the narrow inbound rules are defense-in-depth/current intended policy, but
+      unsolicited packets are presently blocked upstream by the Fios firewall
+      before they reach Molasses
+
 This was deliberately kept minimal until the listening-socket inventory is
 reviewed.
 
@@ -392,16 +445,24 @@ Forwarding verified after reboot:
     net.inet.ip.forwarding = 1
     net.inet6.ip6.forwarding = 1
 
-A reboot already verified persistence of:
-- vtnet0 IPv4
-- native IPv6
-- IPv4/IPv6 default routes
-- DN42 loopbacks
-- forwarding
-- WireGuard
-- BIRD
+The 2026-10-02 Molasses reboot verified persistence/recovery of:
+- Molasses hbg1-bridge-ipv6.service
+- IPv6 enabled on virbr-hbg1
+- Molasses bridge gateway 2600:4040:f02d:3201::1/64
+- IPv6 forwarding on Molasses
+- Molasses upstream IPv6 default route and Internet reachability
+- hbg1 VM autostart
+- hbg1 native public IPv6 and Internet reachability
+- both hbg1 core WireGuard tunnels
+- clanker_core Established
+- scopecreep_core Established
 
-PF was enabled afterward and should be included in the next reboot validation.
+After that reboot, the hbg1 core WireGuard listen ports were made deterministic
+at UDP/51825 and UDP/51826 and both remote peers learned the new endpoints while
+BGP remained Established.
+
+PF is enabled in rc.conf; record an explicit post-reboot PF status/rules check
+separately if desired.
 
 ===============================================================================
 10. EXTERNAL PEERING POLICY
@@ -524,8 +585,8 @@ Suggested rebuild:
 5. Verify SSH through 10.99.0.13.
 6. Restore DN42 loopback identities.
 7. Enable IPv4/IPv6 forwarding.
-8. Restore wg-dn42-core to Clanker.
-9. Restore wg-dn42-sc to ScopeCreep.
+8. Restore wg-dn42-core to Clanker with ListenPort = 51825.
+9. Restore wg-dn42-sc to ScopeCreep with ListenPort = 51826.
 10. Verify both WireGuard handshakes and core-address reachability.
 11. Install/restore BIRD.
 12. Restore ROA tables and update-dn42-roa.
@@ -534,7 +595,9 @@ Suggested rebuild:
 15. Verify IPv4/IPv6 DN42 route counts and kernel route installation.
 16. Restore PF and verify SSH is only reachable through wg0.
 17. Verify end-to-end DN42 reachability.
-18. Restore any future external peers one at a time.
+18. Remember the upstream Fios firewall limitation: direct unsolicited Internet
+    traffic to the routed hbg1 /64 is blocked unless the upstream design changes.
+19. Restore any future external peers one at a time.
 
 ===============================================================================
 14. KNOWN NEXT ACTIONS
@@ -550,14 +613,18 @@ Suggested rebuild:
 
 4. Test representative IPv4 and IPv6 DN42 destinations from hbg1 periodically.
 
-5. Reboot Molasses later to verify routed-/64 bridge persistence, IPv6
-   forwarding/RA behavior, the narrow UFW forwarding rule, and both native-IPv6
-   hbg1 core tunnels.
+5. Audit the older explicit Molasses hbg1 -> Clanker UDP/51823 UFW route rule;
+   remove it only if live testing confirms the general routed-/64 outbound rule
+   makes it redundant.
 
-6. When the first external hbg1 peer is approved, implement and verify the
+6. Identify or deliberately remove the existing Fios Clanker -> Molasses
+   UDP/51824 pinhole. Current evidence says hbg1 does not use it and Molasses has
+   no current listener/config reference on 51824.
+
+7. When the first external hbg1 peer is approved, implement and verify the
    promised 5 Mbps-per-direction limiter before enabling general peer traffic.
 
-7. Re-test internal failover after significant BIRD or WireGuard policy changes.
+8. Re-test internal failover after significant BIRD or WireGuard policy changes.
 
 ===============================================================================
 END

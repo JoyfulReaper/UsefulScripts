@@ -3,8 +3,8 @@ HBG1
 Infrastructure / Recovery / DN42 Router Overview
 Snapshot date: 2026-10-02
 Updated through routed-IPv6 reboot verification, fixed core WireGuard listen
-ports, Verizon/Fios IPv6 ingress testing, and third-party peering documentation
-on 2026-10-02.
+ports, persistent Verizon/Fios IPv6 ingress via Molasses, and third-party
+peering documentation on 2026-10-02.
 
 PURPOSE
 -------
@@ -107,7 +107,7 @@ Current consequence:
 
 Verified Fios-pinhole workaround for inbound hbg1 UDP:
     A Fios IPv6 pinhole can target Molasses because Molasses is a directly known
-    LAN host. Molasses can then source-restricted DNAT that UDP port to hbg1's
+    LAN host. Molasses then source-restricted DNATs that UDP port to hbg1's
     routed IPv6 address. This was tested end-to-end on 2026-10-02:
 
         Clanker -> Molasses UDP/51825 -> DNAT -> hbg1 UDP/51825
@@ -115,9 +115,21 @@ Verified Fios-pinhole workaround for inbound hbg1 UDP:
 
     tcpdump on hbg1 confirmed unsolicited test datagrams and real WireGuard
     packets reached the expected hbg1 listen ports through the pinhole + DNAT
-    path. The current DNAT rules were added interactively with ip6tables and
-    still require a deliberate persistence mechanism on Molasses before this
-    path should be treated as reboot-safe.
+    path.
+
+    Molasses now persists these two source-restricted DNAT rules with:
+        /usr/local/sbin/hbg1-wg-dnat
+        /etc/systemd/system/hbg1-wg-dnat.service
+
+    The service is enabled, Type=oneshot with RemainAfterExit=yes, and its apply
+    action is deliberately idempotent: it removes every matching stale/duplicate
+    copy before installing exactly one Clanker rule and one ScopeCreep rule.
+    Repeated manual apply tests left exactly two rules, and an ordinary UFW reload
+    also left exactly two rules.
+
+    UFW remains responsible for forwarding/filter policy. hbg1-wg-dnat.service
+    owns only these DNAT rules. The DNAT service is enabled for reboot but has not
+    yet had a deliberate reboot persistence test since it was created.
 
 Existing Fios pinhole note:
     An older Clanker -> Molasses UDP/51824 pinhole also exists in the Fios router.
@@ -415,9 +427,10 @@ Molasses forwarding policy for hbg1:
     - inbound Clanker -> hbg1 UDP/51825 is explicitly allowed
     - inbound ScopeCreep -> hbg1 UDP/51826 is explicitly allowed
     - related/established return traffic is handled by conntrack
-    - the narrow inbound rules are defense-in-depth/current intended policy, but
-      unsolicited packets are presently blocked upstream by the Fios firewall
-      unless a Molasses-targeted pinhole + DNAT path is used
+    - unsolicited inbound from the two core peers can use the source-restricted
+      Fios pinhole + Molasses DNAT path
+    - UFW owns forwarding/filter rules; hbg1-wg-dnat.service owns the two DNAT
+      rules only
 
 This was deliberately kept minimal until the listening-socket inventory is
 reviewed.
@@ -482,6 +495,14 @@ The 2026-10-02 Molasses reboot verified persistence/recovery of:
 After that reboot, the hbg1 core WireGuard listen ports were made deterministic
 at UDP/51825 and UDP/51826 and both remote peers learned the new endpoints while
 BGP remained Established.
+
+Molasses DNAT persistence added later on 2026-10-02:
+    /usr/local/sbin/hbg1-wg-dnat
+    /etc/systemd/system/hbg1-wg-dnat.service
+
+The service is enabled and survived repeated apply/UFW-reload testing without
+creating duplicate rules. A deliberate Molasses reboot test of this new DNAT
+service is still outstanding.
 
 PF is enabled in rc.conf; record an explicit post-reboot PF status/rules check
 separately if desired.
@@ -615,7 +636,9 @@ D. Choose the residential-underlay direction deliberately
            and that UDP port to hbg1's routed IPv6 and hbg1 listen port.
         4. Add/verify a narrow UFW route rule from that exact peer source through
            wifi0 -> virbr-hbg1 to the hbg1 destination/port.
-        5. Persist the DNAT rule; an interactive ip6tables rule is not enough.
+        5. Add the peer-specific DNAT rule to the idempotent
+           /usr/local/sbin/hbg1-wg-dnat mechanism and verify restarting
+           hbg1-wg-dnat.service leaves exactly one copy of the rule.
         6. Test from the remote peer while tcpdump watches both Molasses wifi0
            and hbg1 vtnet0.
         7. If the peer is given molasses.kgivler.com as the endpoint, remember
@@ -737,8 +760,8 @@ J. Rollback order
         2. Confirm the two existing internal core sessions remain healthy.
         3. Bring down/remove the peer WireGuard interface.
         4. Remove peer-specific PF/limiter state.
-        5. If used, remove the Molasses UFW/DNAT rule and Fios pinhole only after
-           the peer is down.
+        5. If used, remove the peer-specific Molasses UFW forward rule, DNAT
+           entry from hbg1-wg-dnat, and Fios pinhole only after the peer is down.
         6. Restore the backed-up configs if needed and validate before reload.
 
     Never solve a bad external peer by weakening the global ROA, BGP, PF, UFW,
@@ -844,7 +867,9 @@ Suggested rebuild:
 16. Restore PF and verify SSH is only reachable through wg0.
 17. Verify end-to-end DN42 reachability.
 18. Remember the upstream Fios firewall limitation: direct unsolicited Internet
-    traffic to the routed hbg1 /64 is blocked unless the upstream design changes.
+    traffic to the routed hbg1 /64 is blocked. If inbound initiation is required,
+    restore the Fios pinholes, Molasses UFW forward rules, and
+    hbg1-wg-dnat.service path.
 19. Restore any future external peers one at a time using the peering runbook.
 
 ===============================================================================
@@ -869,9 +894,9 @@ Suggested rebuild:
    pinhole. Current evidence says hbg1 does not use it and Molasses has no current
    listener/config reference on 51824.
 
-7. Make the proven Molasses IPv6 DNAT rules for hbg1 UDP/51825 and UDP/51826
-   persistent, then verify both paths after a Molasses reboot or deliberate
-   firewall reload before relying on the Fios pinholes for inbound initiation.
+7. Deliberately reboot Molasses once to verify hbg1-wg-dnat.service recreates
+   exactly the two intended UDP/51825 and UDP/51826 DNAT rules and both core
+   WireGuard/BGP sessions recover normally.
 
 8. Implement/test automatic WireGuard endpoint refresh/re-resolution after a
    residential IPv6 prefix/DDNS change if Molasses-fronted hostname endpoints

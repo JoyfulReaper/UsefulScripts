@@ -226,6 +226,11 @@ hbg1 virtualization / routed residential IPv6:
             Clanker -> Molasses UDP/51825 -> 2600:4040:f02d:3201::13:51825
             ScopeCreep -> Molasses UDP/51826 -> 2600:4040:f02d:3201::13:51826
 
+        Peer-facing ingress hostname:
+            hbg1.kgivler.com
+            AAAA currently set manually to 2600:4040:f02d:3200::5
+            not yet automatically updated if Verizon changes the delegated /56
+
         DNAT persistence:
             /usr/local/sbin/hbg1-wg-dnat
             /etc/systemd/system/hbg1-wg-dnat.service
@@ -1021,10 +1026,12 @@ Home LAN / Internet
     recreates exactly the two intended DNAT rules, the Fios ingress path still
     works, and both hbg1 WireGuard/iBGP cores recover normally.
 
-15. If the Clanker/ScopeCreep core endpoints are moved to molasses.kgivler.com,
-    implement/test automatic endpoint refresh/re-resolution after a residential
-    IPv6 prefix/DDNS change rather than assuming WireGuard continuously re-resolves
-    endpoint hostnames.
+15. Inspect the existing Molasses DDNS automation and extend/adapt it so
+    hbg1.kgivler.com AAAA automatically tracks the current Molasses/Fios ingress
+    address when Verizon changes the delegated prefix. The record currently
+    points manually to 2600:4040:f02d:3200::5. Also test any WireGuard endpoint
+    refresh/re-resolution needed after a DNS change rather than assuming
+    WireGuard continuously re-resolves endpoint hostnames.
 
 ===============================================================================
 17. SUMMARY
@@ -1066,6 +1073,8 @@ DN42-specific current state:
     - Fios pinholes plus the idempotent hbg1-wg-dnat.service provide a proven
       source-restricted inbound path to hbg1 UDP/51825 and UDP/51826; reboot
       persistence of the new DNAT service remains to be tested deliberately.
+    - hbg1.kgivler.com currently names the Molasses/Fios ingress address but its
+      AAAA is manually maintained until DDNS automation is extended for it.
     - Direct authoritative PTR queries now succeed for Clanker's router identity.
     - Ordinary recursive PTR discovery is still waiting on registry reverse
       delegation to become visible.

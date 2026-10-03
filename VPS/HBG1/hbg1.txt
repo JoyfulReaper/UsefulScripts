@@ -139,12 +139,17 @@ Existing Fios pinhole note:
     it is deliberately identified or removed; hbg1 does not depend on it.
 
 Dynamic-address note:
-    molasses.kgivler.com is maintained by dynamic DNS and can be used as the
-    stable name for a Molasses-fronted WireGuard endpoint. WireGuard resolves a
-    configured endpoint hostname when the endpoint/configuration is applied; it
-    should not be assumed to re-resolve continuously after an ISP prefix change.
-    If Molasses-fronted endpoints become permanent, add a restart/reapply or
-    periodic endpoint-refresh mechanism and test recovery after a DDNS change.
+    hbg1.kgivler.com currently has a manually configured AAAA pointing at the
+    Molasses/Fios residential ingress address 2600:4040:f02d:3200::5. It is the
+    intended peer-facing hostname for the Molasses-fronted WireGuard ingress,
+    but it is NOT currently updated automatically if Verizon changes the
+    delegated residential prefix.
+
+    WireGuard resolves a configured endpoint hostname when the endpoint/config
+    is applied; it should not be assumed to re-resolve continuously after a DNS
+    change. Extend/adapt Molasses's existing DDNS automation so
+    hbg1.kgivler.com tracks the current residential ingress address, and pair
+    that with restart/reapply or periodic endpoint refresh where needed.
 
 IMPORTANT:
     This is residential ISP addressing. Treat the delegated prefix as capable
@@ -641,10 +646,11 @@ D. Choose the residential-underlay direction deliberately
            hbg1-wg-dnat.service leaves exactly one copy of the rule.
         6. Test from the remote peer while tcpdump watches both Molasses wifi0
            and hbg1 vtnet0.
-        7. If the peer is given molasses.kgivler.com as the endpoint, remember
-           that a later ISP-prefix/DDNS change also requires WireGuard endpoint
-           re-resolution/reapplication unless an automatic refresh mechanism is
-           implemented.
+        7. Give the peer hbg1.kgivler.com as the ingress hostname. Its AAAA
+           currently points manually at Molasses's Fios ingress address; until
+           DDNS automation is added, a Verizon prefix change requires updating
+           that record. WireGuard endpoint re-resolution/reapplication may also
+           be required after the DNS change.
 
     Do not create an unrestricted any-source Fios pinhole/DNAT if the peer has a
     stable source IPv6 that can be allowlisted.
@@ -898,9 +904,10 @@ Suggested rebuild:
    exactly the two intended UDP/51825 and UDP/51826 DNAT rules and both core
    WireGuard/BGP sessions recover normally.
 
-8. Implement/test automatic WireGuard endpoint refresh/re-resolution after a
-   residential IPv6 prefix/DDNS change if Molasses-fronted hostname endpoints
-   become permanent.
+8. Inspect Molasses's existing DDNS automation and extend/adapt it so
+   hbg1.kgivler.com AAAA automatically tracks the current Molasses/Fios ingress
+   address when Verizon changes the delegated prefix. Then implement/test any
+   WireGuard endpoint refresh/re-resolution needed after the DNS change.
 
 9. When the first external hbg1 peer is approved, follow the peering runbook and
    implement/verify the promised 5 Mbps-per-direction limiter before enabling

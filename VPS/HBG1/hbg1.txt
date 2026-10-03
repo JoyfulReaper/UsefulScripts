@@ -3,7 +3,8 @@ HBG1
 Infrastructure / Recovery / DN42 Router Overview
 Snapshot date: 2026-10-02
 Updated through routed-IPv6 reboot verification, fixed core WireGuard listen
-ports, and Verizon/Fios IPv6 ingress testing on 2026-10-02.
+ports, Verizon/Fios IPv6 ingress testing, and third-party peering documentation
+on 2026-10-02.
 
 PURPOSE
 -------
@@ -104,12 +105,34 @@ Current consequence:
     and use PersistentKeepalive = 25. They do not require unsolicited inbound
     Internet reachability to hbg1 to remain healthy.
 
+Verified Fios-pinhole workaround for inbound hbg1 UDP:
+    A Fios IPv6 pinhole can target Molasses because Molasses is a directly known
+    LAN host. Molasses can then source-restricted DNAT that UDP port to hbg1's
+    routed IPv6 address. This was tested end-to-end on 2026-10-02:
+
+        Clanker -> Molasses UDP/51825 -> DNAT -> hbg1 UDP/51825
+        ScopeCreep -> Molasses UDP/51826 -> DNAT -> hbg1 UDP/51826
+
+    tcpdump on hbg1 confirmed unsolicited test datagrams and real WireGuard
+    packets reached the expected hbg1 listen ports through the pinhole + DNAT
+    path. The current DNAT rules were added interactively with ip6tables and
+    still require a deliberate persistence mechanism on Molasses before this
+    path should be treated as reboot-safe.
+
 Existing Fios pinhole note:
-    A Clanker -> Molasses UDP/51824 pinhole exists in the Fios router.
+    An older Clanker -> Molasses UDP/51824 pinhole also exists in the Fios router.
     Molasses wg0 currently listens on UDP/55435, has no persistent ListenPort,
     nothing local was found listening on UDP/51824, and no Molasses config
-    reference to 51824 was found. Treat that pinhole as unknown/stale until it is
-    deliberately identified or removed; hbg1 does not depend on it.
+    reference to 51824 was found. Treat that older pinhole as unknown/stale until
+    it is deliberately identified or removed; hbg1 does not depend on it.
+
+Dynamic-address note:
+    molasses.kgivler.com is maintained by dynamic DNS and can be used as the
+    stable name for a Molasses-fronted WireGuard endpoint. WireGuard resolves a
+    configured endpoint hostname when the endpoint/configuration is applied; it
+    should not be assumed to re-resolve continuously after an ISP prefix change.
+    If Molasses-fronted endpoints become permanent, add a restart/reapply or
+    periodic endpoint-refresh mechanism and test recovery after a DDNS change.
 
 IMPORTANT:
     This is residential ISP addressing. Treat the delegated prefix as capable
@@ -273,7 +296,6 @@ ScopeCreep BGP transport:
     local fd42:42:42:252::a
     neighbor fd42:42:42:252::9
 
-
 Each core uses one IPv6 BGP TCP session carrying:
     IPv4 NLRI
     IPv6 NLRI
@@ -395,7 +417,7 @@ Molasses forwarding policy for hbg1:
     - related/established return traffic is handled by conntrack
     - the narrow inbound rules are defense-in-depth/current intended policy, but
       unsolicited packets are presently blocked upstream by the Fios firewall
-      before they reach Molasses
+      unless a Molasses-targeted pinhole + DNAT path is used
 
 This was deliberately kept minimal until the listening-socket inventory is
 reviewed.
@@ -495,6 +517,232 @@ Reason for the conservative cap:
 If multiple peers are eventually added, consider an additional aggregate hbg1
 DN42 bandwidth cap so many 5 Mbps peers cannot collectively dominate the home
 connection.
+
+Third-party peering runbook
+---------------------------
+
+Use this checklist for each new external DN42 peer. The goal is to make a new
+peer reproducible without rediscovering the residential/Fios/Molasses details.
+Do not reuse the internal Clanker/ScopeCreep core keys or blindly copy an
+existing peer's addresses, ports, or policy.
+
+A. Verify the peer before configuring anything
+
+    1. Verify the peer's ASN and registry objects in the DN42 registry.
+    2. Confirm its advertised IPv4/IPv6 prefixes have appropriate route/route6
+       objects and valid ROAs.
+    3. Record the operator/contact and the intended peering location/node.
+    4. Decide explicitly whether this is ordinary bilateral peering or an
+       exceptional transit arrangement. Default is NO third-party transit.
+    5. Exchange only public WireGuard keys. Never place private keys in chat,
+       tickets, Git, or this repository.
+
+B. Agree the link details with the peer
+
+    Record, before implementation:
+        peer ASN
+        peer public underlay endpoint/address family
+        peer WireGuard UDP port
+        peer WireGuard public key
+        hbg1 fixed WireGuard listen port for this peer
+        mutually agreed tunnel IPv4/IPv6 addresses
+        BGP neighbor/source addresses
+        whether one IPv6 BGP session will carry IPv4 + IPv6 NLRI
+        whether RFC 8950 Extended Next Hop is supported/desired
+        expected import/export policy
+        any BGP communities the peer expects or supplies
+
+    Prefer native IPv6 underlay and IPv6 BGP transport where practical, but use
+    the arrangement actually agreed with the peer. Do not invent link addresses
+    before agreement.
+
+C. Create a dedicated WireGuard interface/keypair on hbg1
+
+    Use a distinct interface name such as:
+        wg-dn42-<peer>
+
+    Generate a fresh keypair with restrictive permissions. Keep the private key
+    only on hbg1/backups that are already approved for secrets. The persistent
+    config belongs under:
+        /usr/local/etc/wireguard/
+
+    The interface should have:
+        a fixed ListenPort
+        the agreed tunnel addresses
+        Table = off
+
+    The peer stanza should have:
+        the peer's public key
+        its agreed public Endpoint when hbg1 will initiate
+        PersistentKeepalive = 25 when NAT/stateful-firewall behavior makes that
+            useful
+
+    If the tunnel is expected to carry dynamically learned DN42 routes, broad
+    AllowedIPs such as 0.0.0.0/0 and ::/0 may be appropriate with Table = off,
+    as on the internal cores; BIRD then owns route selection. If a narrower
+    AllowedIPs design is possible for the agreed topology, prefer it. In either
+    case, do not rely on AllowedIPs as the BGP import/export policy.
+
+    Bring up/test the new interface separately before adding it permanently to
+    wireguard_interfaces in /etc/rc.conf. Avoid restarting all existing core
+    tunnels merely to test one new peer.
+
+D. Choose the residential-underlay direction deliberately
+
+    Preferred/simple case:
+        hbg1 initiates WireGuard to the peer's public endpoint.
+
+    This works through the current Fios stateful firewall and normally requires
+    no inbound Fios pinhole for hbg1. PersistentKeepalive can keep the mapping
+    usable.
+
+    If the remote peer must be able to initiate unsolicited WireGuard traffic
+    toward hbg1, direct Internet -> 2600:4040:f02d:3201::13 is NOT currently
+    usable because Fios blocks unsolicited traffic to the downstream routed /64.
+    Use the proven Molasses-fronted path instead:
+
+        Internet peer
+            -> Fios IPv6 pinhole to Molasses on a dedicated UDP port
+            -> source-restricted Molasses IPv6 DNAT
+            -> narrow Molasses UFW routed allow rule
+            -> hbg1 fixed WireGuard ListenPort
+
+    For that mode:
+        1. Reserve a unique fixed UDP port for the peer.
+        2. In Fios, create an IPv6 pinhole whose external host is the peer's
+           public IPv6, internal host is Molasses, and destination is that port.
+        3. On Molasses, add source-restricted DNAT from Molasses's public IPv6
+           and that UDP port to hbg1's routed IPv6 and hbg1 listen port.
+        4. Add/verify a narrow UFW route rule from that exact peer source through
+           wifi0 -> virbr-hbg1 to the hbg1 destination/port.
+        5. Persist the DNAT rule; an interactive ip6tables rule is not enough.
+        6. Test from the remote peer while tcpdump watches both Molasses wifi0
+           and hbg1 vtnet0.
+        7. If the peer is given molasses.kgivler.com as the endpoint, remember
+           that a later ISP-prefix/DDNS change also requires WireGuard endpoint
+           re-resolution/reapplication unless an automatic refresh mechanism is
+           implemented.
+
+    Do not create an unrestricted any-source Fios pinhole/DNAT if the peer has a
+    stable source IPv6 that can be allowlisted.
+
+E. Add PF policy on hbg1
+
+    Current PF blocks BGP TCP/179 globally except on explicitly permitted core
+    interfaces. Before enabling BGP on a new interface, add the equivalent
+    interface-specific pass rule for TCP/179 ahead of the global block, e.g. the
+    same pattern used for wg-dn42-core and wg-dn42-sc.
+
+    Validate before loading:
+        sudo pfctl -nf /etc/pf.conf
+
+    Then inspect the live rules after reload:
+        sudo pfctl -sr
+
+    Keep SSH restricted to management wg0 unless there is an explicit reason to
+    change that policy.
+
+F. Implement the promised bandwidth limit BEFORE normal peer traffic
+
+    External hbg1 peers are advertised as capped at:
+        5 Mbps in each direction per peer
+
+    Pick and document the FreeBSD mechanism used for that interface/peer (for
+    example the chosen PF/dummynet/ipfw design), validate syntax, and test both
+    directions. Do not call the peer production-ready until the limiter has been
+    measured under load.
+
+G. Add the BIRD eBGP session
+
+    Create a peer-specific BIRD configuration matching the existing hbg1 config
+    organization. The session needs:
+        local AS 4242420425
+        remote peer ASN
+        neighbor/source addresses from the agreed tunnel
+        IPv4 and/or IPv6 channels as agreed
+        Extended Next Hop when carrying IPv4 NLRI over IPv6 transport
+
+    Import policy must continue to reject invalid/non-DN42 routes and validate
+    route origins against the DN42 ROA tables. Reuse the existing validated
+    helper/filter policy rather than creating a looser one-off filter.
+
+    Export policy defaults to Kyle's own intended advertisements only. Do NOT
+    turn a new bilateral peer into general transit by exporting routes learned
+    from the other external peers or internal full feeds unless transit was
+    separately and deliberately approved and tested.
+
+    Before reload:
+        sudo bird -p -c /usr/local/etc/bird.conf
+
+    Only after validation:
+        sudo birdc configure
+
+H. Validate the peer end to end
+
+    Minimum validation checklist:
+        sudo wg show wg-dn42-<peer>
+            recent handshake
+            expected endpoint
+            transfer counters move
+
+        ping/ping6 the agreed tunnel neighbor addresses
+
+        sudo birdc show protocols
+            new eBGP protocol reaches Established
+            clanker_core remains Established
+            scopecreep_core remains Established
+
+        inspect imported routes from the new protocol
+            expected DN42 routes only
+            ROA-invalid routes rejected
+
+        inspect exported routes to the new protocol
+            only the intended AS4242420425 advertisements
+            no accidental default route
+            no accidental third-party transit/full-table re-export
+
+        test representative DN42 IPv4 and IPv6 destinations through the peer
+
+        verify the 5 Mbps limiter in both directions
+
+        if using the Molasses-fronted inbound design, prove an unsolicited
+        outside -> Fios pinhole -> Molasses DNAT/UFW -> hbg1 packet reaches the
+        fixed WireGuard port
+
+        reboot or deliberately cycle only the new interface/service once the
+        live setup is stable, then verify WireGuard + BGP recover
+
+I. Document and monitor it
+
+    Record in this file or the appropriate peer inventory:
+        peer name / ASN
+        interface name
+        public endpoint
+        hbg1 fixed listen port
+        tunnel addresses
+        BGP protocol name
+        import/export policy summary
+        bandwidth limit implementation
+        whether Fios/Molasses pinhole + DNAT is required
+        activation/test date
+
+    Add monitoring for handshake/BGP health if the peer becomes long-lived.
+    Ensure the new persistent config and non-public secrets are covered by the
+    intended hbg1 VM backup/recovery path.
+
+J. Rollback order
+
+    If the peer behaves incorrectly:
+        1. Disable the BIRD peer/protocol first so no more routes are exchanged.
+        2. Confirm the two existing internal core sessions remain healthy.
+        3. Bring down/remove the peer WireGuard interface.
+        4. Remove peer-specific PF/limiter state.
+        5. If used, remove the Molasses UFW/DNAT rule and Fios pinhole only after
+           the peer is down.
+        6. Restore the backed-up configs if needed and validate before reload.
+
+    Never solve a bad external peer by weakening the global ROA, BGP, PF, UFW,
+    or Fios policy for everybody else.
 
 ===============================================================================
 11. FULL-MESH / FAILOVER STATUS
@@ -597,7 +845,7 @@ Suggested rebuild:
 17. Verify end-to-end DN42 reachability.
 18. Remember the upstream Fios firewall limitation: direct unsolicited Internet
     traffic to the routed hbg1 /64 is blocked unless the upstream design changes.
-19. Restore any future external peers one at a time.
+19. Restore any future external peers one at a time using the peering runbook.
 
 ===============================================================================
 14. KNOWN NEXT ACTIONS
@@ -617,14 +865,23 @@ Suggested rebuild:
    remove it only if live testing confirms the general routed-/64 outbound rule
    makes it redundant.
 
-6. Identify or deliberately remove the existing Fios Clanker -> Molasses
-   UDP/51824 pinhole. Current evidence says hbg1 does not use it and Molasses has
-   no current listener/config reference on 51824.
+6. Identify or deliberately remove the older Fios Clanker -> Molasses UDP/51824
+   pinhole. Current evidence says hbg1 does not use it and Molasses has no current
+   listener/config reference on 51824.
 
-7. When the first external hbg1 peer is approved, implement and verify the
-   promised 5 Mbps-per-direction limiter before enabling general peer traffic.
+7. Make the proven Molasses IPv6 DNAT rules for hbg1 UDP/51825 and UDP/51826
+   persistent, then verify both paths after a Molasses reboot or deliberate
+   firewall reload before relying on the Fios pinholes for inbound initiation.
 
-8. Re-test internal failover after significant BIRD or WireGuard policy changes.
+8. Implement/test automatic WireGuard endpoint refresh/re-resolution after a
+   residential IPv6 prefix/DDNS change if Molasses-fronted hostname endpoints
+   become permanent.
+
+9. When the first external hbg1 peer is approved, follow the peering runbook and
+   implement/verify the promised 5 Mbps-per-direction limiter before enabling
+   normal peer traffic.
+
+10. Re-test internal failover after significant BIRD or WireGuard policy changes.
 
 ===============================================================================
 END

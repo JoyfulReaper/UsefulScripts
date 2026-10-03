@@ -4,7 +4,8 @@ Infrastructure / Recovery / Service Overview
 Snapshot date: 2026-10-02
 Updated through hbg1 KVM/libvirt deployment, routed residential IPv6, the
 three-router DN42 core, the Molasses/FrontDesk backup migration and restore
-verification, and the hbg1 routed-IPv6 persistence/firewall repair on 2026-10-02.
+verification, the hbg1 routed-IPv6 persistence repair, and persistent Fios
+pinhole/DNAT ingress for hbg1 on 2026-10-02.
 
 PURPOSE
 -------
@@ -198,16 +199,52 @@ hbg1 virtualization / routed residential IPv6:
         2600:4040:f02d:3201::1/64. This was fixed on 2026-10-02 after a reboot
         exposed that libvirt creates the IPv4-only NAT bridge with IPv6 disabled.
 
-    Firewall:
+    Firewall / inbound WireGuard:
         Molasses UFW default routed policy remains deny.
         General routed IPv6 outbound is allowed from 2600:4040:f02d:3201::/64
         on virbr-hbg1 to wifi0.
-        Explicit inbound routed WireGuard rules allow:
-            Clanker public IPv6 -> hbg1 2600:4040:f02d:3201::13 UDP/18461
-            ScopeCreep public IPv6 -> hbg1 2600:4040:f02d:3201::13 UDP/63206
-        An older explicit hbg1 -> Clanker UDP/51823 rule is still present and may
-        be redundant with the general routed-/64 outbound rule; audit before
-        removing it.
+
+        hbg1 now has deterministic WireGuard listen ports:
+            Clanker core:    UDP/51825
+            ScopeCreep core: UDP/51826
+
+        Narrow UFW routed rules allow only the expected peer public IPv6 source
+        to each hbg1 WireGuard port:
+            Clanker 2607:f2d8:8416:10c1::bad:1dea -> hbg1 UDP/51825
+            ScopeCreep 2607:9000:700:1063:b1ee:d:c0ff:ee -> hbg1 UDP/51826
+
+        Fios drops unsolicited traffic sent directly to the downstream routed
+        2600:4040:f02d:3201::/64. The proven workaround is:
+
+            remote peer
+                -> source-restricted Fios IPv6 pinhole to Molasses
+                -> source-restricted Molasses IPv6 DNAT
+                -> narrow UFW routed allow
+                -> hbg1 fixed WireGuard port
+
+        Current mappings:
+            Clanker -> Molasses UDP/51825 -> 2600:4040:f02d:3201::13:51825
+            ScopeCreep -> Molasses UDP/51826 -> 2600:4040:f02d:3201::13:51826
+
+        DNAT persistence:
+            /usr/local/sbin/hbg1-wg-dnat
+            /etc/systemd/system/hbg1-wg-dnat.service
+
+        hbg1-wg-dnat.service is enabled, Type=oneshot with RemainAfterExit=yes,
+        and owns only the two DNAT rules. Its apply action removes all matching
+        stale/duplicate copies before adding exactly one of each rule. Repeated
+        apply tests and a UFW reload both left exactly two DNAT rules.
+
+        The service has not yet had a deliberate reboot persistence test since
+        it was created.
+
+        An older explicit hbg1 -> Clanker UDP/51823 UFW route rule is still
+        present and may be redundant with the general routed-/64 outbound rule;
+        audit before removing it.
+
+        An older Fios Clanker -> Molasses UDP/51824 pinhole also exists. Molasses
+        currently has no matching listener/config reference, so treat it as
+        unknown/stale until deliberately identified or removed.
 
     DN42:
         hbg1 is a separate BIRD router, not a BGP process on Molasses.
@@ -246,13 +283,22 @@ Important private-WireGuard services include:
 hbg1 routed IPv6 policy:
     - outbound routed IPv6 from 2600:4040:f02d:3201::/64 is allowed from
       virbr-hbg1 to wifi0
-    - inbound Clanker WireGuard is limited to the Clanker public IPv6 source and
-      hbg1 UDP/18461
-    - inbound ScopeCreep WireGuard is limited to the ScopeCreep public IPv6
-      source and hbg1 UDP/63206
+    - inbound Clanker WireGuard is limited to Clanker's public IPv6 source and
+      hbg1 UDP/51825
+    - inbound ScopeCreep WireGuard is limited to ScopeCreep's public IPv6 source
+      and hbg1 UDP/51826
     - related/established return traffic is accepted by UFW/conntrack
+    - Fios pinholes target Molasses because hbg1 is behind a separately routed
+      /64; hbg1-wg-dnat.service then translates only the two source-restricted
+      UDP flows to hbg1
+    - UFW owns forwarding/filter rules; hbg1-wg-dnat.service owns DNAT only
     - the older explicit hbg1 -> Clanker UDP/51823 route rule remains pending a
       cleanup audit because the general outbound /64 rule appears to cover it
+
+The two DNAT rules were intentionally not kept in /etc/ufw/before6.rules.
+Testing showed a custom *nat section there was appended again on each `ufw reload`,
+creating duplicates. The block was removed and before6.rules returned to its
+filter-only role. The idempotent systemd helper is the persistent NAT authority.
 
 Docker's packet-filter integration must be considered separately from simple UFW
 status when auditing exposure.
@@ -483,6 +529,7 @@ Important host services include:
     cron.service
     docker.service
     hbg1-bridge-ipv6.service
+    hbg1-wg-dnat.service
     NetworkManager.service
     pihole-FTL.service
     smartmontools.service
@@ -496,9 +543,19 @@ hbg1-bridge-ipv6.service is enabled and is required for routed residential IPv6
 to hbg1. It waits for virbr-hbg1, enables IPv6 on the bridge, and installs the
 2600:4040:f02d:3201::1/64 gateway address.
 
-A temporary molasses-wifi-ipv6.service was created while diagnosing RA behavior,
-but was disabled after verifying dhcpcd already manages wifi0's upstream IPv6
-route. The unit file may be removed after one deliberate reboot verification.
+hbg1-wg-dnat.service is enabled and persists the source-restricted Clanker and
+ScopeCreep UDP DNAT rules used by the Fios pinholes. The helper is:
+    /usr/local/sbin/hbg1-wg-dnat
+
+The service is Type=oneshot with RemainAfterExit=yes. It was tested by applying
+it repeatedly and by reloading UFW; both tests left exactly two matching DNAT
+rules. A deliberate reboot test is still outstanding.
+
+The temporary diagnostic molasses-wifi-ipv6.service was removed after the
+successful 2026-10-02 reboot verification. A backup remains at:
+    /root/molasses-wifi-ipv6.service.retired-2026-10-02
+
+dhcpcd is the intended manager of wifi0 upstream IPv6/RA state.
 
 ===============================================================================
 9. PI-HOLE / UNBOUND
@@ -809,29 +866,34 @@ Suggested high-level rebuild order:
 8. Restore UFW policy.
 9. Restore IPv6 forwarding and hbg1-bridge-ipv6.service; verify virbr-hbg1 has
    IPv6 enabled and 2600:4040:f02d:3201::1/64 before relying on hbg1 public IPv6.
-10. Install Docker / Compose.
-11. Restore Compose/configuration.
-12. Restore Pi-hole and Unbound.
-13. Restore DN42 forward/reverse forwarding config.
-14. Verify:
+10. Restore /usr/local/sbin/hbg1-wg-dnat and hbg1-wg-dnat.service if the Fios
+    pinhole ingress path is required; verify exactly one 51825 and one 51826
+    DNAT rule are present.
+11. Restore/verify the corresponding Fios IPv6 pinholes and narrow UFW routed
+    rules before expecting unsolicited Clanker/ScopeCreep initiation to hbg1.
+12. Install Docker / Compose.
+13. Restore Compose/configuration.
+14. Restore Pi-hole and Unbound.
+15. Restore DN42 forward/reverse forwarding config.
+16. Verify:
        normal DNS
        .dn42 forward DNS
        DN42 IPv4 reverse forwarding
        DN42 IPv6 reverse forwarding
-15. Verify direct authoritative reachability to:
+17. Verify direct authoritative reachability to:
        ns1 .50 / ::50
        ns2 .51 / ::51
-16. Restore Cloudflare Tunnel.
-17. Restore minimum Matrix identity/configuration.
-18. Recreate fresh Matrix PostgreSQL under current policy.
-19. Restore selected SQLite/application state.
-20. Restore backup scripts and secret files out-of-band.
-21. Verify Clanker peer repository and FrontDesk repository.
-22. Perform representative restore tests.
-23. Verify the separate hbg1 -> FrontDesk VM backup path.
-24. Verify hbg1 native IPv6, both core WireGuard tunnels, and both iBGP sessions.
-25. Enable backup/maintenance timers.
-26. Leave B2 maintenance disabled unless the B2 investigation is deliberately reopened.
+18. Restore Cloudflare Tunnel.
+19. Restore minimum Matrix identity/configuration.
+20. Recreate fresh Matrix PostgreSQL under current policy.
+21. Restore selected SQLite/application state.
+22. Restore backup scripts and secret files out-of-band.
+23. Verify Clanker peer repository and FrontDesk repository.
+24. Perform representative restore tests.
+25. Verify the separate hbg1 -> FrontDesk VM backup path.
+26. Verify hbg1 native IPv6, both core WireGuard tunnels, and both iBGP sessions.
+27. Enable backup/maintenance timers.
+28. Leave B2 maintenance disabled unless the B2 investigation is deliberately reopened.
 
 ===============================================================================
 15. CURRENT HIGH-LEVEL SERVICE MAP
@@ -844,6 +906,12 @@ Home LAN / Internet
         +-- wifi0
         |     192.168.1.5
         |     native public IPv6
+        |     |
+        |     +-- Fios pinholes UDP/51825, UDP/51826
+        |            |
+        |            +-- hbg1-wg-dnat.service
+        |                   |
+        |                   +-- virbr-hbg1 -> hbg1 fixed WG ports
         |
         +-- Pi-hole :53
         |      |
@@ -942,19 +1010,21 @@ Home LAN / Internet
 
 11. Keep this dossier synchronized as DN42 addressing/DNS/topology changes.
 
-12. Audit and harden the hbg1 UFW forwarding policy: verify both narrow inbound
-    WireGuard rules, verify conntrack/return behavior, and remove the older
-    hbg1 -> Clanker UDP/51823-specific rule only if live testing confirms the
-    general routed-/64 outbound rule makes it redundant.
+12. Audit the older explicit hbg1 -> Clanker UDP/51823 UFW route rule and remove
+    it only if live testing confirms the general routed-/64 outbound rule makes
+    it redundant.
 
-13. Perform one deliberate reboot/persistence verification after the 2026-10-02
-    repair: confirm hbg1-bridge-ipv6.service succeeds, virbr-hbg1 has IPv6
-    enabled and 2600:4040:f02d:3201::1/64, hbg1 has working public IPv6, both
-    WireGuard handshakes recover, and both BIRD core sessions are Established.
+13. Identify or deliberately remove the older Fios Clanker -> Molasses UDP/51824
+    pinhole after confirming nothing historical still depends on it.
 
-14. After that reboot verification, remove the disabled temporary
-    /etc/systemd/system/molasses-wifi-ipv6.service if it is still unnecessary;
-    dhcpcd is the intended manager of wifi0 upstream IPv6/RA state.
+14. Perform one deliberate Molasses reboot to verify hbg1-wg-dnat.service
+    recreates exactly the two intended DNAT rules, the Fios ingress path still
+    works, and both hbg1 WireGuard/iBGP cores recover normally.
+
+15. If the Clanker/ScopeCreep core endpoints are moved to molasses.kgivler.com,
+    implement/test automatic endpoint refresh/re-resolution after a residential
+    IPv6 prefix/DDNS change rather than assuming WireGuard continuously re-resolves
+    endpoint hostnames.
 
 ===============================================================================
 17. SUMMARY
@@ -970,6 +1040,7 @@ Its responsibilities include:
     - DN42 client connectivity through Clanker
     - direct testing of ns1 and ns2
     - KVM/libvirt hosting and routed residential IPv6 gateway for hbg1
+    - source-restricted Fios pinhole/DNAT ingress for hbg1 WireGuard
     - Matrix Synapse + PostgreSQL
     - Cloudflare Tunnel
     - WireGuard
@@ -992,6 +1063,9 @@ DN42-specific current state:
       over IPv4 and IPv6.
     - hbg1 has native residential IPv6 routed through Molasses and native-IPv6
       WireGuard/iBGP cores to both Clanker and ScopeCreep.
+    - Fios pinholes plus the idempotent hbg1-wg-dnat.service provide a proven
+      source-restricted inbound path to hbg1 UDP/51825 and UDP/51826; reboot
+      persistence of the new DNAT service remains to be tested deliberately.
     - Direct authoritative PTR queries now succeed for Clanker's router identity.
     - Ordinary recursive PTR discovery is still waiting on registry reverse
       delegation to become visible.

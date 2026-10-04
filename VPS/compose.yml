@@ -69,6 +69,26 @@ services:
       GeminiContent__Hosts__pipes.verymad.net__ContentDirectory: "/app/content-pipes"
       GeminiContent__Hosts__pipes.verymad.net__UseGlobalPages: "false"
 
+      # Host 2 - Yggdrasil
+      Gemini__Hostnames__2: "gemini.ygg.kgivler.com"
+      Gemini__Certificates__gemini.ygg.kgivler.com__Path: "/app/certs/overlay.kgivler.pfx"
+
+      # Host 3 - DN42
+      Gemini__Hostnames__3: "gemini.kgivler.dn42"
+      Gemini__Certificates__gemini.kgivler.dn42__Path: "/app/certs/overlay.kgivler.pfx"
+
+      # Host 4 - YGG
+      Gemini__Hostnames__4: "verymad.ygg.kgivler.com"
+      Gemini__Certificates__verymad.ygg.kgivler.com__Path: "/app/certs/verymad.ygg.kgivler.com.pfx"
+      GeminiContent__Hosts__verymad.ygg.kgivler.com__ContentDirectory: "/app/content-pipes"
+      GeminiContent__Hosts__verymad.ygg.kgivler.com__UseGlobalPages: "false"
+
+      # Host 5 - DN42 Pipes
+      Gemini__Hostnames__5: "pipes.verymad.dn42"
+      Gemini__Certificates__pipes.verymad.dn42__Path: "/app/certs/pipes.verymad.dn42.pfx"
+      GeminiContent__Hosts__pipes.verymad.dn42__ContentDirectory: "/app/content-pipes"
+      GeminiContent__Hosts__pipes.verymad.dn42__UseGlobalPages: "false"
+
       # Mission Control
       MissionControl__Enabled: "true"
       MissionControl__BaseUrl: "http://127.0.0.1:5190"
@@ -850,7 +870,7 @@ services:
       - backend
 
   randomgithub:
-    image: joyful/randomgithub:${RANDOMGITHUB_IMAGE_TAG}
+    image: ghcr.io/joyfulreaper/randomgithub:${RANDOMGITHUB_IMAGE_TAG}
 
     build:
       context: ./Random_Github
@@ -918,9 +938,10 @@ services:
 
     volumes:
       - /var/lib/randomgithub/data:/app/Data
+      - /var/lib/randomgithub/data-protection:/home/app/.aspnet/DataProtection-Keys
 
   randomsteam:
-    image: joyful/randomsteam:${RANDOMSTEAM_IMAGE_TAG}
+    image: ghcr.io/joyfulreaper/randomsteam:${RANDOMSTEAM_IMAGE_TAG}
 
     build:
       context: ./RandomSteamGame
@@ -1187,10 +1208,8 @@ services:
   happygopher-mystery:
     image: joyful-stack-happygopher
     restart: unless-stopped
-    network_mode: host
-    user: "0:0"
     environment:
-      Gopher__ListenAddress: "2607:f2d8:8416:10c1::dead"
+      Gopher__ListenAddress: "::"
       Gopher__DualMode: "false"
       Gopher__Port: "70"
       Gopher__PublicHost: "pipes.verymad.net"
@@ -1202,7 +1221,7 @@ services:
       Gopher__ResponseTimeoutSeconds: "60"
       GopherPages__PluginDirectory: "/app/plugins"
       MissionControl__Enabled: "true"
-      MissionControl__BaseUrl: "http://127.0.0.1:5190"
+      MissionControl__BaseUrl: "http://gateway:8080"
       MissionControl__ApiKey: "${MYSTERYGOPHER_MISSION_CONTROL_KEY}"
       MissionControl__TimeoutMilliseconds: "1000"
       HappyQotd__Enabled: "false"
@@ -1210,10 +1229,17 @@ services:
     volumes:
       - /var/lib/happygopher-mystery/content:/app/content:ro
       - /var/lib/happygopher-mystery/plugins:/app/plugins:ro
+
+    ports:
+      - "[2607:f2d8:8416:10c1::dead]:70:70"
+
     cap_drop:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+
+    networks:
+      - backend
 
   happygopher-dn42:
     image: joyful-stack-happygopher
@@ -1248,6 +1274,108 @@ services:
 
     ports:
       - "[fdf0:e12c:5528::70]:70:70"
+
+    networks:
+      - backend
+
+  happygopher-mystery-ygg:
+    image: joyful-stack-happygopher
+    restart: unless-stopped
+    environment:
+      Gopher__ListenAddress: "::"
+      Gopher__DualMode: "false"
+      Gopher__Port: "70"
+      Gopher__PublicHost: "verymad.ygg.kgivler.com"
+      Gopher__ContentRoot: "/app/content"
+      Gopher__MaxConcurrentConnections: "64"
+      Gopher__MaxSelectorBytes: "4096"
+      Gopher__MaxInputBytes: "1024"
+      Gopher__RequestTimeoutSeconds: "15"
+      Gopher__ResponseTimeoutSeconds: "60"
+      GopherPages__PluginDirectory: "/app/plugins"
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: "http://gateway:8080"
+      MissionControl__ApiKey: "${MYSTERYGOPHER_MISSION_CONTROL_KEY}"
+      MissionControl__TimeoutMilliseconds: "1000"
+      HappyQotd__Enabled: "false"
+      Guestbook__Enabled: "false"
+    volumes:
+      - /var/lib/happygopher-mystery/content:/app/content:ro
+      - /var/lib/happygopher-mystery/plugins:/app/plugins:ro
+    ports:
+      - "[301:762f:80bd:20e1::dead]:70:70"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - backend
+
+  mystery-web-ygg:
+    image: ghcr.io/joyfulreaper/mystery-web:v2
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      MysteryWeb__NodeAddress: "301:762f:80bd:20e1::dead"
+      MysteryWeb__PublicHost: "verymad.ygg.kgivler.com"
+      MysteryWeb__PublicPort: "80"
+    ports:
+      - "127.0.0.1:8087:8080"
+
+  mystery-web:
+    image: ghcr.io/joyfulreaper/mystery-web:v2
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      MysteryWeb__NodeAddress: "2607:f2d8:8416:10c1::dead"
+      MysteryWeb__PublicHost: "pipes.verymad.net"
+      MysteryWeb__PublicPort: "443"
+    ports:
+      - "127.0.0.1:8085:8080"
+
+  mystery-web-dn42:
+    image: ghcr.io/joyfulreaper/mystery-web:v2
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      MysteryWeb__NodeAddress: "fdf0:e12c:5528::dead"
+      MysteryWeb__PublicHost: "pipes.verymad.dn42"
+      MysteryWeb__PublicPort: "443"
+    ports:
+      - "127.0.0.1:8086:8080"
+
+  happygopher-mystery-dn42:
+    image: joyful-stack-happygopher
+    restart: unless-stopped
+    environment:
+      Gopher__ListenAddress: "::"
+      Gopher__DualMode: "false"
+      Gopher__Port: "70"
+      Gopher__PublicHost: "pipes.verymad.dn42"
+      Gopher__ContentRoot: "/app/content"
+      Gopher__MaxConcurrentConnections: "64"
+      Gopher__MaxSelectorBytes: "4096"
+      Gopher__MaxInputBytes: "1024"
+      Gopher__RequestTimeoutSeconds: "15"
+      Gopher__ResponseTimeoutSeconds: "60"
+      GopherPages__PluginDirectory: "/app/plugins"
+      MissionControl__Enabled: "true"
+      MissionControl__BaseUrl: "http://gateway:8080"
+      MissionControl__ApiKey: "${MYSTERYGOPHER_MISSION_CONTROL_KEY}"
+      MissionControl__TimeoutMilliseconds: "1000"
+      HappyQotd__Enabled: "false"
+      Guestbook__Enabled: "false"
+    volumes:
+      - /var/lib/happygopher-mystery/content:/app/content:ro
+      - /var/lib/happygopher-mystery/plugins:/app/plugins:ro
+
+    ports:
+      - "[fdf0:e12c:5528::dead]:70:70"
+
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
 
     networks:
       - backend

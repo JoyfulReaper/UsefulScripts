@@ -916,5 +916,50 @@ Suggested rebuild:
 10. Re-test internal failover after significant BIRD or WireGuard policy changes.
 
 ===============================================================================
+DN42 COMMUNITY METADATA UPDATE — 2026-10-04
+===============================================================================
+
+Phase 1 of DN42 standard-community metadata is implemented and verified on hbg1
+for IPv4 and IPv6.
+
+BIRD helper:
+    /usr/local/etc/bird/community_filters.conf
+
+IMPORTANT:
+    The helper include must appear before direct_lo in /usr/local/etc/bird.conf
+    because direct_lo calls dn42_add_origin_geo().
+
+    Backups of peer configs must NOT be stored under:
+        /usr/local/etc/bird/peers/
+
+    That directory is wildcard-included by BIRD. Peer-config backups belong in:
+        /usr/local/etc/bird/backups/
+
+Policy:
+    informational metadata only
+    no community-based local-preference, MED, or route-selection changes
+
+hbg1-originated router host routes are tagged:
+    (64511,42)    North America-East
+    (64511,1840)  United States
+
+Current hbg1 core links:
+    Clanker:     (3,0,34,83,0)
+    ScopeCreep:  (5,0,34,83,0)
+
+Tuple order:
+    latency, bandwidth, crypto, topology, packet-loss
+
+Bandwidth and packet loss remain unknown rather than guessed. IPv4 and IPv6
+imports/exports were verified on both internal core sessions. BGP.local_pref
+remained 100 during verification.
+
+Canonical documentation:
+    VPS/dn42/community-metadata.md
+
+Human-readable route reporter:
+    VPS/dn42/dn42-route-report.py
+
+===============================================================================
 END
 ===============================================================================

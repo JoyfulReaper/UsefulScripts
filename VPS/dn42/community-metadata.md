@@ -42,6 +42,24 @@ existing community in that category.
 Short ping samples are not used to assert a packet-loss class. Loss is left
 unknown unless there is enough evidence to advertise one responsibly.
 
+## Operational interpretation
+
+Keep these rules in mind when reading route metadata:
+
+- `0` does **not** mean zero latency, zero bandwidth, or zero packet loss. It
+  means unknown / do not alter that metadata category.
+- geography describes the route origin, not the router currently viewing the
+  route
+- latency propagates pessimistically: the highest / worst bucket wins
+- bandwidth propagates pessimistically: the weakest / lowest bucket wins
+- crypto propagates pessimistically: the weakest / lowest security bucket wins
+- unknown local values do not erase known upstream values
+- short ping tests are not sufficient evidence to assign a packet-loss class
+- existing unrelated standard communities, large communities, and other BGP
+  attributes should survive metadata processing
+- these communities are informational only; they currently do not influence
+  local preference, MED, or route selection
+
 ## Propagation behavior
 
 The shared BIRD helpers preserve the DN42 path semantics while adding metadata
@@ -176,10 +194,25 @@ Both IPv4 and IPv6 exports were verified to carry origin geography plus the
 appropriate local core-link metadata. Both core BGP sessions remained
 Established after the change.
 
-## Verification examples
+## Phase 2B validation evidence
 
-Representative Clanker view for `172.22.105.8/29` on 2026-10-04 showed three
-candidate paths with distinct propagated metadata:
+Phase 2B was completed on 2026-10-04 using live BIRD route views on Clanker,
+ScopeCreep, and hbg1.
+
+| Test | Observed result |
+| --- | --- |
+| hbg1 origin `172.20.220.53/32` viewed from Clanker | East/US origin retained; Clanker-facing latency became `3`; crypto `34`; topology `83`; local-pref `100` |
+| hbg1 origin `172.20.220.53/32` viewed from ScopeCreep | East/US origin retained; ScopeCreep-facing latency became `5`; crypto `34`; topology `83`; local-pref `100` |
+| External IPv4 `172.22.105.8/29` via Clanker -> hbg1 | Baragoon upstream latency `1` plus hbg1-Clanker latency `3` produced final latency `3` |
+| External IPv4 `172.22.105.8/29` via ScopeCreep -> hbg1 | Kioubit upstream latency `3` plus hbg1-ScopeCreep latency `5` produced final latency `5` |
+| Known upstream bandwidth plus unknown local bandwidth | Existing bandwidth `23` remained present rather than being erased by local `0` |
+| External IPv6 `fd42:420:3967::/48` via HEADSCARF -> Clanker -> hbg1 | Clanker saw latency `1`; hbg1 saw latency `3`; bandwidth `26`, crypto `34`, topology `83`, and loss `91` survived |
+| Large communities | Preserved on inspected IPv4 and IPv6 routes |
+| BGP OTC | Preserved on the inspected HEADSCARF IPv6 route |
+| Local preference | Remained `100` on inspected BGP routes |
+
+Representative Clanker view for `172.22.105.8/29` also showed three candidate
+paths with distinct propagated metadata:
 
 - Baragoon selected path: latency `1`, bandwidth `23`, crypto `34`, East/US,
   topology `83`
@@ -188,10 +221,14 @@ candidate paths with distinct propagated metadata:
 - HEADSCARF alternate: latency `3`, bandwidth `26`, crypto `34`, East/US,
   topology `83`, loss `91`
 
-This also verifies that an excellent immediate link does not incorrectly replace
-a worse latency bucket already accumulated farther upstream.
+This verifies that an excellent immediate link does not incorrectly replace a
+worse latency bucket already accumulated farther upstream.
 
-Existing BGP large communities on the sample route were preserved.
+The IPv6 sample also demonstrated the reverse case: Clanker's direct HEADSCARF
+path had latency bucket `1`, but exporting the route across the hbg1 core raised
+the resulting path metadata to bucket `3`, matching the worse local segment.
+
+No routing-policy changes were made during Phase 2B.
 
 ## Human-readable route reporter
 
@@ -201,24 +238,60 @@ Repository helper:
 VPS/dn42/dn42-route-report.py
 ```
 
-Example:
+The reporter is read-only. It consumes `birdc show route ... all` text from
+standard input; it does not connect to BIRD, query BIRD itself, or modify BIRD
+configuration/state.
+
+It separates candidate paths, identifies the selected path, shows AS-path /
+next-hop / local-pref / MED when present, and decodes DN42 `64511:*`
+communities into readable labels.
+
+Example from the repository checkout:
 
 ```sh
 sudo birdc 'show route for 172.22.105.8/29 all' |
   ./VPS/dn42/dn42-route-report.py
 ```
 
-The reporter separates candidate paths, identifies the selected path, shows
-AS-path / next-hop / local-pref / MED when present, and decodes DN42 `64511:*`
-communities into readable labels.
+Install as a normal locally maintained command:
+
+```sh
+sudo install -o root -g root -m 0755 \
+  VPS/dn42/dn42-route-report.py \
+  /usr/local/bin/dn42-route-report
+```
+
+Then use it as:
+
+```sh
+sudo birdc 'show route for 172.22.105.8/29 all' |
+  dn42-route-report
+```
+
+`/usr/local/bin` is used rather than `/usr/bin` because this is locally managed
+tooling rather than an OS/package-manager-owned file.
+
+Current deployment status:
+
+- installed at `/usr/local/bin/dn42-route-report` on Clanker
+- not installed on ScopeCreep or hbg1; install there only when useful
 
 ## Current phase status
 
-Phase 1 — informational metadata deployment: complete on all three routers.
+Phase 1 — informational metadata deployment: **complete** on all three routers.
 
-Phase 2 — inspection and validation: in progress. The first human-readable route
-reporter is now tracked in UsefulScripts.
+Phase 2A — route inspection / specimen collection: **complete**.
+
+Phase 2B — propagation validation across routers and both address families:
+**complete** as of 2026-10-04.
+
+Phase 2C — human-readable reporting and canonical operational documentation:
+**complete for current needs**. The reporter and this document are tracked in
+UsefulScripts.
+
+Phase 2D — optional UI / looking-glass integration: deferred until it would be
+useful.
 
 Phase 3 — using communities to influence route selection: deliberately deferred.
-No community-driven local-pref or MED policy should be introduced until the
-metadata has been inspected and validated more broadly.
+No community-driven local-pref or MED policy should be introduced until that is
+a separate, explicit routing-policy project.

@@ -4,8 +4,10 @@
 Usage:
     sudo birdc 'show route for 172.22.105.8/29 all' | ./dn42-route-report.py
 
-The script is read-only. It separates BIRD candidate paths, marks the selected
-path, and renders AS64511/DN42 standard communities as human-readable metadata.
+The script is read-only. It consumes BIRD route output from standard input; it
+does not connect to BIRD, query BIRD itself, or modify BIRD configuration or
+state. It separates candidate paths, marks the selected path, and renders
+AS64511/DN42 standard communities as human-readable metadata.
 """
 
 import re

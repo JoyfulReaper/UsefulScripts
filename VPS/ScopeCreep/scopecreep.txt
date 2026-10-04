@@ -1070,5 +1070,46 @@ watch transfer usage, tc drops/overlimits, peer stability, and failover behavior
 before broadening transit to any additional peer.
 
 ===============================================================================
+DN42 COMMUNITY METADATA UPDATE — 2026-10-04
+===============================================================================
+
+Phase 1 of DN42 standard-community metadata is implemented and verified on
+ScopeCreep for IPv4 and IPv6.
+
+BIRD helper:
+    /etc/bird/community_filters.conf
+
+Policy:
+    informational metadata only
+    no community-based local-preference, MED, or route-selection changes
+
+ScopeCreep-originated router/service host routes are tagged:
+    (64511,44)    North America-West
+    (64511,1840)  United States
+
+Current ScopeCreep links:
+    iEdon Dallas:        (4,23,34,83,0)
+    Kioubit Los Angeles: (3,23,34,83,0)
+    MOE233 Las Vegas:    (3,0,34,83,0)
+    Clanker core:        (5,0,34,83,0)
+    hbg1 core:           (5,0,34,83,0)
+
+Tuple order:
+    latency, bandwidth, crypto, topology, packet-loss
+
+A value of 0 means unknown and leaves that category untouched. Existing
+communities and large communities are preserved. Packet loss remains unknown
+on Kyle-controlled links rather than being inferred from short ping samples.
+
+Verified route inspection showed metadata propagation without changing
+BGP.local_pref or otherwise changing route selection.
+
+Canonical documentation:
+    VPS/dn42/community-metadata.md
+
+Human-readable route reporter:
+    VPS/dn42/dn42-route-report.py
+
+===============================================================================
 END
 ===============================================================================

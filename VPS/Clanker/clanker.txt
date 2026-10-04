@@ -2288,3 +2288,52 @@ DN42Landing deployment:
     bind=127.0.0.1:5186
     state directory=/var/lib/dn42landing
     DB=/var/lib/dn42landing/peering.db
+
+===============================================================================
+DN42 COMMUNITY METADATA UPDATE — 2026-10-04
+===============================================================================
+
+Phase 1 of DN42 standard-community metadata is implemented and verified on
+Clanker for IPv4 and IPv6.
+
+BIRD helper:
+    /etc/bird/community_filters.conf
+
+Policy:
+    informational metadata only
+    no community-based local-preference, MED, or route-selection changes
+
+Local origin geography:
+    (64511,42)    North America-East
+    (64511,1840)  United States
+
+Link metadata tuples use:
+    latency, bandwidth, crypto, topology, packet-loss
+
+Current Clanker links:
+    RoutedBits EWR:       (1,23,34,83,0)
+    Baragoon NY:          (1,23,34,83,0)
+    HEADSCARF175 EWR:     (1,0,34,83,0)
+    ScopeCreep core:      (5,0,34,83,0)
+    hbg1 core:            (3,0,34,83,0)
+
+A value of 0 means unknown and leaves that category untouched. Latency keeps
+the worst/highest bucket; bandwidth and crypto keep the weakest value. Origin
+geography is added only to locally originated routes. Existing standard and
+large communities are preserved.
+
+Packet loss remains unknown on Kyle-controlled links rather than being inferred
+from short ping samples.
+
+Verified route inspection showed metadata propagation without changing
+BGP.local_pref or otherwise changing route selection.
+
+Canonical documentation:
+    VPS/dn42/community-metadata.md
+
+Human-readable route reporter:
+    VPS/dn42/dn42-route-report.py
+
+===============================================================================
+END
+===============================================================================

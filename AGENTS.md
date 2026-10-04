@@ -1,438 +1,245 @@
 # AGENTS.md
 
-Operational guide for humans and AI agents working in this repository.
+Working guide for humans and AI agents in `UsefulScripts`.
 
-This file is intended to answer two questions quickly:
+The main purpose of this file is to keep this repository from quietly turning
+back into a private infrastructure/runbook repository.
 
-1. What is this repository and where does a thing belong?
-2. What safety/operational rules should be followed before changing it?
+## Repository scope
 
-## Repository role
+`UsefulScripts` is the **public reusable-tools repository**.
 
-`UsefulScripts` is the operations/configuration/recovery repository for the
-JoyfulReaper infrastructure. It contains deployment models, host inventories,
-backup scripts, systemd units, routing/network documentation, monitoring
-helpers, shell utilities, and recovery notes.
+A file belongs here when it is useful outside the exact current state of Kyle's
+infrastructure. Good fits include:
 
-It is **not** normally the source repository for the applications themselves.
-Application source generally lives in separate repositories. Live deployment
-trees can contain assembled build contexts that are intentionally not all
-tracked here.
+- reusable shell/PowerShell/Python helpers;
+- generic administration utilities;
+- generic backup/restore tooling;
+- templates and example configuration;
+- public DN42 tools and documentation;
+- small monitoring/diagnostic helpers;
+- reusable snippets and prompts.
 
-For example, Clanker's live main Compose tree is:
+`UsefulScripts` is **not** the canonical repository for live infrastructure
+state.
 
-```text
-/opt/stacks/joyful-stack
-```
+Live operational material belongs in the private `JoyfulReaper/InfraOps`
+repository, including:
 
-and `/opt/joyful-stack` is a symlink to that tree. The live tree may contain
-application build contexts that do not exist in `UsefulScripts`.
+- host inventories/dossiers;
+- exact internal topology;
+- current firewall/routing state;
+- recovery runbooks tied to real hosts;
+- deployment-specific configuration;
+- real SSH alias/topology maps;
+- home/residential-network documentation;
+- exact backup relationships and recovery dependencies;
+- notes whose usefulness depends on current hostnames, addresses, providers,
+  ports, disks, services, or machine roles.
+
+Secrets belong in **neither repository**. Keep passwords, private keys, API
+tokens, populated environment files, restic passwords, certificate private
+keys, WireGuard private keys, and similar material in the approved secret store
+or protected host-local files.
+
+## The scope test
+
+Before adding a file, ask:
+
+> Would this still make sense if the current hosts and topology disappeared
+> tomorrow?
+
+If yes, it probably belongs in `UsefulScripts`.
+
+If no, it probably belongs in `InfraOps`.
+
+If something is borderline, default to `InfraOps`. If part of it is genuinely
+reusable, extract a sanitized/generic version into `UsefulScripts` rather than
+copying the live runbook here.
+
+Do not solve scope creep by duplicating the same operational document in both
+repositories.
 
 ## Top-level map
 
+Typical public/reusable areas include:
+
 ```text
 UsefulScripts/
-├── AGENTS.md              this operational guide
-├── README.md              public/high-level repository overview
-├── Docs/                  general infrastructure/recovery notes
-├── LLMs/                  reusable LLM prompts/context
-├── VPS/                   server, service, DN42, backup, and deployment material
-├── bash/                  small Unix/Linux shell utilities
-├── powershell/            Windows administration/diagnostic helpers
-├── windows/               other Windows-specific material
-├── kvirc/                 KVirc hooks/config snippets
-└── ssh_config.txt          convenient SSH aliases/topology reference
+├── AGENTS.md
+├── README.md
+├── Docs/                  generic/public notes
+├── LLMs/                  reusable prompt/context files
+├── VPS/                   reusable VPS/service/network tooling and examples
+├── bash/                  Unix/Linux helpers
+├── powershell/            PowerShell helpers
+├── windows/               Windows-specific tooling
+└── kvirc/                 KVirc scripts/hooks
 ```
 
-`README.md` is for a human-facing overview. `AGENTS.md` is the more explicit
-working map and safety guide.
-
-## VPS directory
-
-`VPS/` is the main infrastructure area.
-
-Important entries include:
-
-- `VPS/compose.yml` — version-controlled model for the main Clanker Compose
-  stack. Validate/deploy from the assembled live tree, not by assuming every
-  build context exists in this repository.
-- `VPS/.env.example` — example variable names only. Never replace this with a
-  populated secret-bearing environment file.
-- `VPS/New-VPS-Setup.md` — notes/checklist for provisioning a new VPS.
-- `VPS/Clanker/` — Clanker host dossier and Clanker-specific operational docs.
-- `VPS/ScopeCreep/` — ScopeCreep host dossier and helpers.
-- `VPS/HBG1/` — hbg1 FreeBSD residential DN42 POP dossier, restore notes, and
-  ROA updater.
-- `VPS/Molasses/` — Molasses home-server dossier.
-- `VPS/frontdesk/` — FrontDesk host material.
-- `VPS/dn42/` — cross-router DN42 documentation/tools shared by the AS.
-- `VPS/Backup/` — backup and repository-maintenance tooling organized by host.
-- service directories such as `HappyEcho`, `HappyDaytime`, `HappyFinger`,
-  `HappyGopher`, `HappyQOTD`, `MissionControl`, `RandomSteamGame`, and `Beszel`
-  contain deployment/configuration material for those services, not necessarily
-  their complete application source.
-
-When looking for the current state of a machine, prefer its host dossier before
-inferring state from old scripts or snippets.
-
-## Host dossiers: canonical operational snapshots
-
-The large `*.txt` host files are broad infrastructure/recovery inventories.
-They are intentionally more detailed than a normal README and should be kept
-useful for rebuilding or understanding a machine.
-
-Primary dossiers:
-
-- `VPS/Clanker/clanker.txt`
-- `VPS/ScopeCreep/scopecreep.txt`
-- `VPS/HBG1/hbg1.txt`
-- `VPS/Molasses/molasses.txt`
-- `VPS/frontdesk/frontdesk.txt`
-
-These files may contain dated observations. Do not silently convert an old
-observation into a claim about current live state. If a change is being made
-live and the resulting state has been verified, update the relevant dossier or
-specialized documentation when practical.
-
-Prefer specialized docs for detailed procedures and let the host dossier point
-to them rather than duplicating many pages of the same material.
+Some historical directories may still contain deployment-specific material
+while the repository split is being completed. Do not treat that as precedent
+for adding more private operational state here.
 
 ## DN42
 
-AS identity:
+Public DN42 material may remain in this repository when it is intentionally
+public or reusable, for example:
 
-```text
-AS4242420425
-IPv4: 172.20.220.48/28
-IPv6: fdf0:e12c:5528::/48
-```
+- route/community decoding tools;
+- generic BIRD helpers;
+- public peering/tooling documentation;
+- registry-facing information;
+- scripts that are useful to another DN42 operator without requiring Kyle's
+  private underlay/topology.
 
-Main DN42 routers currently documented in this repo:
+Private/internal DN42 implementation details belong in `InfraOps` when they
+primarily document the live core, private underlay, host recovery, firewall
+state, or residential network.
 
-- **Clanker** — primary VPS edge/router.
-- **ScopeCreep** — secondary VPS edge/router.
-- **hbg1** — FreeBSD residential POP hosted on Molasses.
+Current community metadata policy is informational only unless a separate,
+deliberate routing-policy change says otherwise. Do not casually turn metadata
+communities into route-selection policy during cleanup/refactoring.
 
-Clanker, ScopeCreep, and hbg1 form the internal three-router core. Do not assume
-that every external peer has the same export/transit policy.
+## Backup tooling
 
-### DN42 documentation map
+Reusable backup scripts may remain public when they keep credentials outside
+Git and can reasonably be adapted elsewhere.
 
-Use these before reinventing or guessing policy:
+Prefer:
 
-- `VPS/dn42/internal-core.md` — internal core topology/design.
-- `VPS/dn42/looking-glass.md` — looking-glass deployment/architecture.
-- `VPS/dn42/community-metadata.md` — canonical documentation for the current
-  DN42 standard-community metadata implementation across the three routers.
-- `VPS/dn42/dn42-route-report.py` — read-only human-readable decoder/report for
-  BIRD route output and DN42 `64511:*` communities.
-- `VPS/dn42/netrate` — DN42 network-rate helper.
-- `VPS/Clanker/dn42-peering.md` — Clanker peering details/policy.
-- `VPS/Clanker/dn42-controlled-transit.md` — Clanker controlled-transit design
-  and current explicit transit peers.
-- `VPS/Clanker/boot-recovery.md` — verified Clanker boot/recovery behavior.
-- `VPS/HBG1/hbg1-restore.md` — hbg1 restore/rebuild procedure.
+- configuration/environment inputs instead of hardcoded live topology;
+- secret files referenced by path rather than embedded values;
+- generic repository/host variables instead of one-off deployment constants;
+- example configs with placeholder values.
 
-### DN42 community policy
+Detailed restore reports, exact backup topology, real repository relationships,
+and host-specific disaster-recovery procedures belong in `InfraOps`.
 
-As of 2026-10-04, DN42 standard communities are used as **informational
-metadata only**. They describe latency, bandwidth, crypto, topology, packet
-loss, and origin geography. The helpers intentionally do **not** change
-`local_pref`, MED, or route selection.
+Do not put secrets into a public example just because the surrounding script is
+safe to publish.
 
-Do not introduce community-driven route preference as an incidental cleanup.
-That is a separate routing-policy change and must be deliberate, reviewed, and
-verified independently.
+## Deployment configuration
 
-The canonical details and current link tuples belong in
-`VPS/dn42/community-metadata.md` rather than being duplicated here.
+Examples/templates may live here.
 
-### BIRD operational rules
+A real production Compose file, firewall dump, SSH config, host inventory, or
+other deployment map should generally live in `InfraOps`. If a public example is
+valuable, create a sanitized example instead of publishing the live file.
 
-Routing changes are high-impact. Use this sequence unless there is a strong
-reason not to:
-
-1. Inspect the current config/state.
-2. Make a backup outside any wildcard include directory.
-3. Make one narrow change.
-4. Parse/validate the entire BIRD config.
-5. Only then reload/reconfigure BIRD.
-6. Verify the affected protocol remains Established.
-7. Verify representative IPv4 and IPv6 routes/attributes.
-
-On Linux routers, the main configuration is under `/etc/bird/`.
-On hbg1/FreeBSD, it is under `/usr/local/etc/`.
-
-Important hbg1 lesson: the config includes the peer directory with a wildcard.
-Do **not** leave backup copies in `/usr/local/etc/bird/peers/`; BIRD will parse
-them too and duplicate protocol definitions. Put backups under a separate
-backup directory.
-
-BIRD helper functions must be included/defined before a protocol/filter calls
-them.
-
-### hbg1 / FreeBSD differences
-
-Do not blindly paste Linux administration commands onto hbg1.
-
-Common differences include:
-
-- BIRD config: `/usr/local/etc/bird.conf`
-- BIRD support files: `/usr/local/etc/bird/`
-- service/package paths under `/usr/local/`
-- administrative group commonly `wheel`
-- BSD `sed -i ''` syntax differs from GNU `sed -i`
-- firewall is PF, not UFW
-
-Prefer a parse test before any `birdc configure`.
-
-## Backup layout and rules
-
-Backup tooling lives under:
-
-```text
-VPS/Backup/<Host>/
-```
-
-Current host directories include:
-
-- `Clanker`
-- `ScopeCreep`
-- `FrontDesk`
-- `HBG1`
-- `Molasses`
-- `RyzenShine`
-
-A host directory may contain:
-
-- `backup.sh` — ordinary backup job
-- `*-repo-maintenance.sh` — trusted repository maintenance
-- `*-restore.md` — restore/verification notes
-- `systemd/` — tracked service/timer units
-
-Restic is the preferred backup mechanism.
-
-Keep ordinary backup runs separate from repository maintenance
-(`forget`/`prune`/`check`) when practical. The machine physically storing a
-repository generally owns trusted maintenance for that repository.
-
-### Backup safety
-
-- Backblaze B2 is currently **broken / under investigation** for this
-  environment. Do not treat old successful B2 logs/code as proof that it is a
-  viable required destination. Re-evaluate cost/limits and restore/maintenance
-  behavior before relying on it.
-- Clanker is storage-constrained. Avoid large temporary copies/tarballs there
-  unless necessary.
-- Use SQLite online backup/snapshot logic for live SQLite databases; do not
-  blindly copy an actively written database.
-- Preserve the existing NATS/stateful-service consistency procedures in the
-  backup scripts.
-- Do not back up Docker images, layer/cache data, containerd cache, package
-  cache, or other easily regenerated runtime/build cache without a specific
-  reason.
-- Do not casually delete old recovery material or repositories. Destructive
-  retention/prune changes require explicit review.
-
-## Clanker
-
-Clanker is the primary always-on Ubuntu VPS and a central application/network
-host.
-
-Useful starting points:
-
-- `VPS/Clanker/clanker.txt` — broad host/recovery inventory.
-- `VPS/Clanker/dn42-peering.md` — DN42 peering/policy.
-- `VPS/Clanker/dn42-controlled-transit.md` — explicit controlled transit.
-- `VPS/Clanker/boot-recovery.md` — boot/recovery validation.
-- `VPS/Backup/Clanker/backup.sh` — current tracked backup implementation.
-- `VPS/Clanker/update-dn42-roa.sh` — tracked DN42 ROA updater.
-
-Live main Compose tree:
-
-```text
-/opt/stacks/joyful-stack
-```
-
-Compatibility symlink:
-
-```text
-/opt/joyful-stack
-```
-
-Installed backup entry point is normally:
-
-```text
-/usr/local/sbin/vps-backup
-```
-
-Before changing Clanker backup coverage, compare the current Docker mounts and
-persistent host paths with what the script already stages.
-
-## ScopeCreep
-
-ScopeCreep is the secondary always-on VPS and DN42 edge/router. It also
-participates in reciprocal backup/storage duties.
-
-Useful starting points:
-
-- `VPS/ScopeCreep/scopecreep.txt` — broad host/recovery inventory.
-- `VPS/ScopeCreep/iedon-transit-status.sh` — status helper for the iEdon
-  controlled-transit path.
-- `VPS/Backup/ScopeCreep/` — backup and repository-maintenance tooling.
-- `VPS/dn42/community-metadata.md` — current DN42 metadata behavior.
-
-Do not generalize a controlled-transit exception into a default full-transit
-policy for every peer.
-
-## hbg1
-
-hbg1 is the FreeBSD residential DN42 POP/router hosted on Molasses.
-
-Useful starting points:
-
-- `VPS/HBG1/hbg1.txt` — broad host/recovery inventory.
-- `VPS/HBG1/hbg1-restore.md` — restore procedure.
-- `VPS/HBG1/update-dn42-roa.sh` — FreeBSD-compatible DN42 ROA updater.
-- `VPS/Backup/HBG1/` — backup material.
-- `VPS/dn42/community-metadata.md` — community/link metadata.
-
-hbg1 is not a general unrestricted transit node by default. Preserve its
-intended export/import policy unless deliberately changing network design.
-
-## Molasses / FrontDesk / RyzenShine
-
-- `VPS/Molasses/molasses.txt` documents the home server and the infrastructure
-  around hbg1.
-- `VPS/frontdesk/frontdesk.txt` documents FrontDesk.
-- `VPS/Backup/Molasses/`, `VPS/Backup/FrontDesk/`, and
-  `VPS/Backup/RyzenShine/` contain their corresponding backup/recovery tooling.
-
-When a task is host-specific, read the host dossier and matching backup folder
-before making assumptions about paths, services, or storage responsibilities.
-
-## Main Compose/deployment model
-
-`VPS/compose.yml` is a deployment model, not proof of current runtime state.
-The assembled live tree is authoritative for a deployment operation, while the
-repository is authoritative for what is intentionally version-controlled.
-
-Typical safe validation from the live tree:
-
-```sh
-docker compose config --quiet
-```
-
-Do not paste unrestricted `docker compose config` output into chat/logs because
-interpolated environment values can contain secrets.
-
-Do not assume that a missing application source directory in this repository
-means the service is absent from production; its build context may be assembled
-from another repository into the live tree.
-
-## General utilities
-
-- `bash/` — small Unix/Linux helpers.
-- `powershell/` — Windows administration/diagnostic helpers.
-- `windows/` — other Windows-specific material.
-- `kvirc/` — KVirc scripts/hooks such as ntfy integration.
-- `ssh_config.txt` — SSH alias/topology reference. It may contain operational
-  topology information but must not contain private keys/passwords.
-- `Docs/` — general notes that span more than one specific host/service.
-- `LLMs/` — reusable prompt/context files; do not treat them as live system
-  state unless independently verified.
+Repository configuration is not proof of current runtime state. Do not make
+claims about a live machine from an old script/template unless the live state
+was separately verified.
 
 ## Safety and secrets
 
 Never commit or ask the user to paste:
 
-- populated `.env` files
-- passwords
-- API keys/access tokens
-- restic repository passwords
-- SSH private keys
-- WireGuard private keys
-- certificate private keys
-- Cloudflare tunnel credentials/tokens
-- ntfy authentication secrets
-- application data-protection keys
-- database secrets
-- `/etc/vps-backup/*` contents
+- populated `.env` files;
+- passwords;
+- API keys/access tokens;
+- restic repository passwords;
+- SSH private keys;
+- WireGuard private keys;
+- certificate private keys;
+- Cloudflare tunnel credentials/tokens;
+- ntfy authentication secrets;
+- application data-protection keys;
+- database credentials;
+- private secret-store contents.
 
-Before suggesting a diagnostic command that could print credentials or
-secret-bearing configuration, warn about it and prefer a narrower command.
+Before suggesting a diagnostic command that might expose credentials, prefer a
+narrower command or explicitly warn about the output.
 
-Prefer metadata-only inspection such as:
+Avoid dumping unrestricted output from commands such as:
 
-- `ls -l`
-- `stat`
-- targeted `grep` for known non-secret fields
-- `systemctl status`
-- `birdc show ...`
-- redacted output
+- `env` / `printenv` / `set`;
+- `docker compose config` on a live deployment;
+- service environment dumps;
+- whole secret-bearing WireGuard/SSH configs;
+- secret directories or password files.
 
-Avoid unrestricted output from:
-
-- `env`
-- `printenv`
-- `set`
-- `docker compose config`
-- `systemctl show ... Environment`
-- `cat /etc/vps-backup/*`
-- whole WireGuard/SSH secret-bearing configs
-
-Treat `/home/*/.ssh`, `/etc/wireguard`, `/usr/local/etc/wireguard`,
-`/etc/vps-backup`, deployment `.env` files, and certificate private material as
-secret-bearing even if only one line is needed.
-
-Do not put secrets into commits, examples, logs, issue text, or chat output.
+Treat credential paths and filenames as potentially sensitive even when the
+values themselves are not present.
 
 ## Change style
 
-For operational/infrastructure work:
+For scripts, infrastructure helpers, and network tooling:
 
-- Prefer one contained step at a time.
-- Inspect before editing.
-- Back up before risky edits.
-- Keep backups out of wildcard include directories.
-- Validate syntax/configuration before reload/restart.
-- Verify the affected service/session afterward.
-- Prefer narrow/reversible changes.
-- Do not combine unrelated cleanup with a routing/firewall/backup change.
-- Preserve working behavior unless the requested task explicitly changes it.
-- Fetch the current Git blob/file before overwriting it.
-- Preserve unrelated edits made since an earlier conversation or commit.
-- Use small, descriptive commits.
-- Update the relevant host dossier or specialized runbook after a verified
-  operational change when that documentation would otherwise become misleading.
+- prefer one contained change at a time;
+- inspect before editing;
+- back up before risky live edits;
+- validate syntax/configuration before reload/restart;
+- verify behavior afterward;
+- prefer narrow and reversible changes;
+- do not mix unrelated cleanup into a routing/firewall/backup change;
+- preserve unrelated edits;
+- fetch the current Git file/blob immediately before overwriting it;
+- use small descriptive commits.
 
-For firewall/routing work, a successful tunnel handshake is not proof that BGP
-or forwarding policy is correct. Verify the relevant control plane and, when
-claiming real transit/data-plane behavior, verify actual packet forwarding rather
-than inferring it from route advertisements alone.
+When editing a live environment, keep live verification and public source
+control as separate concepts. A reusable script can live here; the machine's
+current state and recovery record belong in `InfraOps`.
 
-## Documentation precedence
+## Routing/BIRD tooling
 
-When documents disagree, do not silently merge them into a fictional state.
-Use this order of confidence:
+Routing changes are high-impact. A normal workflow is:
 
-1. Current live, non-secret inspection performed for the task.
-2. A recently verified specialized runbook/document for that subsystem.
-3. The relevant host dossier and its dated observations.
-4. Generic README/example/template material.
-5. Old logs/snippets/history.
+1. inspect current state;
+2. make a backup outside wildcard include directories;
+3. make one narrow change;
+4. parse/validate the complete configuration;
+5. reload only after validation;
+6. verify the affected protocol/session;
+7. verify representative routes/attributes;
+8. verify actual forwarding before claiming data-plane transit works.
 
-State uncertainty when the live system has not been checked.
+A WireGuard handshake alone does not prove BGP or forwarding policy is correct.
 
-## Before finishing an infrastructure change
+Keep OS differences in mind: FreeBSD paths/tools/firewall behavior differ from
+Linux. Do not blindly copy Linux commands into BSD procedures.
 
-A useful completion checklist is:
+## Documentation rules
 
-- syntax/config validation passed
-- affected service/session healthy
-- representative behavior verified
-- IPv4 and IPv6 both checked when the subsystem is dual-stack
-- no secrets were exposed
-- backup/recovery implications considered
-- documentation updated if the change materially altered the documented system
-- repository working tree/commit state is understood
+Generic/public documentation belongs here. Live host state belongs in
+`InfraOps`.
+
+When documentation and reality disagree:
+
+1. current live non-secret inspection wins;
+2. recent verified subsystem documentation comes next;
+3. generic templates/examples come after that;
+4. old logs/history are historical evidence, not current truth.
+
+Do not silently convert a dated observation into a statement about current
+state.
+
+When a live operational change materially changes infrastructure, update
+`InfraOps`, not this repository, unless the reusable tool/template itself also
+changed.
+
+## Repository hygiene
+
+Keep examples obviously non-secret and preferably placeholder-based.
+
+Do not add files merely because they are "useful someday." Prefer a clear
+purpose and reusable scope.
+
+If a new file starts documenting things like:
+
+- which host currently has which IP;
+- how the home network is wired;
+- exactly which peer/service is active;
+- where a production database lives;
+- which machine backs up which other machine;
+- how to rebuild a named production host;
+
+stop and put it in `InfraOps` instead.
+
+The intended long-term shape is simple:
+
+```text
+UsefulScripts = reusable/public tools and examples
+InfraOps       = private live operations and recovery state
+Secrets        = outside Git
+```

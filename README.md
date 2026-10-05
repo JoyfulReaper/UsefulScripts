@@ -20,40 +20,31 @@ environment, it belongs in `InfraOps` instead.
 
 ```text
 UsefulScripts/
-├── VPS/            reusable VPS, backup, DN42, service, and deployment material
-├── bash/           small Unix/Linux shell utilities
+├── VPS/            reusable DN42, Unbound, and monitoring helpers
 ├── kvirc/          KVirc hooks and snippets
 ├── LLMs/           reusable prompt/context files
 ├── powershell/     Windows administration and diagnostic helpers
-├── windows/        other Windows-specific tooling
+├── yggdrasil/      Yggdrasil-related helpers
 ├── Docs/           reusable documentation
 ├── AGENTS.md       repository scope and working rules
 └── README.md
 ```
 
-The split between `UsefulScripts` and `InfraOps` is still being cleaned up, so
-some older deployment-specific material may remain temporarily. New material
-should follow the scope rule above rather than expanding this repository back
-into an infrastructure inventory.
+New material should follow the scope rule above rather than expanding this
+repository back into an infrastructure inventory.
 
 ## VPS material
 
-`VPS/` contains reusable tooling and examples for server administration and
-self-hosted services. Depending on the subdirectory, that may include:
+`VPS/` contains reusable tooling and documentation for server administration
+and networking. Current material includes:
 
-- Docker/Compose examples
-- systemd service and timer units
-- backup and restic helpers
-- monitoring helpers
 - DN42 tools and documentation
-- service-specific deployment examples
-- VPS provisioning notes
+- Linux and FreeBSD BIRD ROA update helpers
+- Unbound configuration snippets
+- monitoring and health-check helpers
 
 Application source normally lives in its own project repository rather than
 here.
-
-Deployment examples are not proof of current production state. Always inspect
-the actual target environment before making an operational change.
 
 ## DN42
 
@@ -101,35 +92,23 @@ Do not commit:
 
 A private Git repository is not a substitute for a secret store.
 
-## Backups
-
-Backup scripts and maintenance helpers can stay public when they are reusable
-and keep credentials outside the repository.
-
-Prefer scripts that load secrets from root-owned files, environment files,
-DPAPI, a password manager, or another appropriate secret store rather than
-embedding credentials.
-
-Host-specific backup topology, restore evidence, repository inventories, and
-recovery runbooks belong in `InfraOps`.
-
 ## Other utilities
 
-### Linux
+### PowerShell
 
-`bash/` contains small shell utilities for Linux/Unix administration and
-troubleshooting.
-
-### PowerShell / Windows
-
-`powershell/` and `windows/` contain Windows administration, diagnostics,
-Hyper-V, IIS, cleanup, networking, and related helpers.
+`powershell/` contains Windows administration, diagnostics, IIS, cleanup,
+networking, and related helpers.
 
 ### KVirc
 
 `kvirc/` contains IRC-related hooks/snippets such as ntfy notification helpers.
 Examples must use placeholders or external secret loading rather than real
 tokens.
+
+### Yggdrasil
+
+`yggdrasil/` contains small helpers for experimenting with and browsing
+Yggdrasil-network resources.
 
 ### LLM helpers
 

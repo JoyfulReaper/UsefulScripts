@@ -403,3 +403,19 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Local secrets and environment configuration
+.env
+.env.*
+!.env.example
+!*.env.example
+*.key
+*.dpapi
+*.secret
+*.secrets
+
+# Common SSH private-key filenames
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa

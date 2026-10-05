@@ -165,6 +165,5 @@ dn42landing user
 
 If DN42Landing is compromised, the stolen credential can publish garbage to `dn42-peering`. It cannot read your notifications, publish to `vps-backups`, mess with `uptime`, or inherit your `kyle` administrator privileges.
 
-That's a pretty good Gopher page, actually: small, practical, self-hosting related, and derived directly from something you actually needed rather than generic LLM sludge.
 
-[1]: https://docs.ntfy.sh/config/?utm_source=chatgpt.com "Configuration - ntfy"
+[1]: https://docs.ntfy.sh/config/ "Configuration - ntfy"

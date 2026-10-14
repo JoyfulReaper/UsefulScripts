@@ -1,6 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+os=$(uname -s)
+case "$os" in
+    Linux|FreeBSD)
+        ;;
+    *)
+        echo "Unsupported OS: $os" >&2
+        exit 1
+        ;;
+esac
+
+interface_exists() {
+    local iface="$1"
+
+    case "$os" in
+        Linux)
+            [[ -d "/sys/class/net/$iface/statistics" ]]
+            ;;
+        FreeBSD)
+            ifconfig "$iface" >/dev/null 2>&1
+            ;;
+    esac
+}
+
+read_counters() {
+    local iface="$1"
+
+    case "$os" in
+        Linux)
+            local base="/sys/class/net/$iface/statistics"
+            rx=$(<"$base/rx_bytes")
+            tx=$(<"$base/tx_bytes")
+            ;;
+        FreeBSD)
+            local counters
+            counters=$(
+                netstat -I "$iface" -b -n | awk '
+                    NR == 1 {
+                        for (i = 1; i <= NF; i++) {
+                            if ($i == "Ibytes") ibytes = i
+                            else if ($i == "Obytes") obytes = i
+                        }
+                        next
+                    }
+                    NR == 2 && ibytes && obytes {
+                        print $ibytes, $obytes
+                        exit
+                    }
+                '
+            )
+
+            if [[ -z "$counters" ]]; then
+                echo "Unable to read counters for interface: $iface" >&2
+                return 1
+            fi
+
+            read -r rx tx <<<"$counters"
+            if [[ ! "$rx" =~ ^[0-9]+$ || ! "$tx" =~ ^[0-9]+$ ]]; then
+                echo "Invalid counters for interface $iface: RX=$rx TX=$tx" >&2
+                return 1
+            fi
+            ;;
+    esac
+}
+
 if (( $# == 0 )); then
     echo "Usage: $0 <interface> [interface ...]"
     exit 1
@@ -13,7 +77,7 @@ for iface in "$@"; do
     [[ -n "${seen[$iface]:-}" ]] && continue
     seen["$iface"]=1
 
-    if [[ ! -d "/sys/class/net/$iface/statistics" ]]; then
+    if ! interface_exists "$iface"; then
         echo "Interface not found: $iface" >&2
         exit 1
     fi
@@ -34,10 +98,7 @@ declare -A current_session_rx
 declare -A current_session_tx
 
 for iface in "${interfaces[@]}"; do
-    base="/sys/class/net/$iface/statistics"
-
-    rx=$(<"$base/rx_bytes")
-    tx=$(<"$base/tx_bytes")
+    read_counters "$iface"
 
     prev_rx["$iface"]=$rx
     prev_tx["$iface"]=$tx
@@ -121,10 +182,7 @@ while true; do
         '--------------------------------------------------------------------------------'
 
     for iface in "${interfaces[@]}"; do
-        base="/sys/class/net/$iface/statistics"
-
-        rx=$(<"$base/rx_bytes")
-        tx=$(<"$base/tx_bytes")
+        read_counters "$iface"
 
         rx_rate=$(( (rx - prev_rx["$iface"]) / interval ))
         tx_rate=$(( (tx - prev_tx["$iface"]) / interval ))
